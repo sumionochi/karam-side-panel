@@ -6,6 +6,7 @@ import { KarmaDisplay } from "@/components/KarmaDisplay";
 import KarmaToday from "@/components/KarmaToday";
 import { WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS } from "@/constants/contract";
 import { KarmaService } from "@/services/KarmaService";
+import KarmaAllTime from "@/components/KarmaAllTime";
 
 declare const chrome: any;
 
@@ -142,9 +143,7 @@ const Index = () => {
 
         {/* Placeholders (will be replaced as we build) */}
         <TabsContent value="alltime">
-          <Card className="border-2 border-border bg-card card-rounded shadow-sharp card-pad text-center text-xs text-muted-foreground">
-            All-time view coming up next. (Totals, net chart, top counterparties, reputation)
-          </Card>
+          <KarmaAllTime twitterUsername={normHandle} addressOverride={address} />
         </TabsContent>
 
         <TabsContent value="history">
