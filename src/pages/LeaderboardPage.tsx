@@ -1,3 +1,4 @@
+// src/pages/LeaderboardPage.tsx
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,29 +7,9 @@ import { KarmaDisplay } from '@/components/KarmaDisplay';
 import { mockLeaderboard, mockCurrentUser } from '@/lib/mockData';
 import { Crown, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { User } from '@/types/karma';
+import type { LeaderboardEntry, User } from '@/types/karma';
 import { useToast } from '@/hooks/use-toast';
 import { useXHandle } from '@/hooks/use-xhandle';
-
-/**
- * LeaderboardPage:
- * - Tries to load top users from an indexer (dynamic import: `@/lib/indexer`)
- * - Falls back to `mockLeaderboard` when indexer is not present
- * - Highlights the current signed-in user (if available) and the detected X handle (if present)
- * - Keeps your existing visual design & badges
- *
- * Expected real lib (optional, auto-detected):
- *   - `@/lib/indexer`: fetchLeaderboard(limit?: number), fetchSelfProfile()
- */
-
-type LeaderboardEntry = {
-  rank: number;
-  change: number; // delta since last period
-  user: User & {
-    totalGiven?: number;
-    totalReceived?: number;
-  };
-};
 
 export const LeaderboardPage = () => {
   const { toast } = useToast();
@@ -38,7 +19,7 @@ export const LeaderboardPage = () => {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [selfAddr, setSelfAddr] = useState<string | null>(null);
 
-  // map of address → ref to allow auto-scroll/highlight
+  // map of address → element for smooth scroll/highlight
   const refs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
@@ -46,30 +27,31 @@ export const LeaderboardPage = () => {
 
     (async () => {
       setLoading(true);
-      /* try {
-        // dynamic import so this page runs even before the real lib exists
+      try {
+        // Dynamic import so this compiles even before the real indexer exists
         const indexer: any = await import('@/lib/indexer').catch(() => null);
 
-        // 1) self profile (for highlighting)
+        // 1) Self (for "You" badge / highlight)
         if (indexer?.fetchSelfProfile) {
           try {
-            const self = await indexer.fetchSelfProfile();
+            const self: User | null = await indexer.fetchSelfProfile();
             if (alive && self?.address) setSelfAddr(self.address);
           } catch {
-            // ignore; mock fallback below
+            // ignore and fallback below
           }
-        } else {
-          // mock fallback
-          setSelfAddr(mockCurrentUser.address);
+        }
+        if (!selfAddr && alive) {
+          setSelfAddr((mockCurrentUser as unknown as User).address);
         }
 
-        // 2) leaderboard
+        // 2) Leaderboard
         if (indexer?.fetchLeaderboard) {
-          const top = await indexer.fetchLeaderboard(50);
+          const top: LeaderboardEntry[] = await indexer.fetchLeaderboard(50);
           if (!alive) return;
-          setEntries(top as LeaderboardEntry[]);
+          setEntries(top ?? []);
         } else {
-          // mock fallback
+          // fallback to mocks
+          if (!alive) return;
           setEntries(mockLeaderboard as unknown as LeaderboardEntry[]);
         }
       } catch (e: any) {
@@ -83,17 +65,21 @@ export const LeaderboardPage = () => {
         setEntries(mockLeaderboard as unknown as LeaderboardEntry[]);
       } finally {
         if (alive) setLoading(false);
-      } */
+      }
     })();
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [toast]);
 
   // highlight priorities: detected X handle > signed-in self
   const highlightAddress = useMemo(() => {
     if (!entries?.length) return null;
     if (xHandle) {
-      const found = entries.find(e => (e.user.socialProfiles?.twitter || '')?.toLowerCase() === xHandle.toLowerCase());
+      const found = entries.find(
+        (e) => (e.user.socialProfiles?.twitter || '').toLowerCase() === xHandle.toLowerCase(),
+      );
       if (found) return found.user.address;
     }
     return selfAddr;
@@ -103,7 +89,6 @@ export const LeaderboardPage = () => {
     if (!highlightAddress) return;
     const el = refs.current[highlightAddress];
     if (el) {
-      // scroll into view smoothly after paint
       requestAnimationFrame(() => {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
@@ -167,81 +152,101 @@ export const LeaderboardPage = () => {
           </>
         )}
 
-        {!loading && entries.map((entry) => {
-          const addr = entry.user.address;
-          const isMe = selfAddr && addr.toLowerCase() === selfAddr.toLowerCase();
-          const isHighlighted = highlightAddress && addr.toLowerCase() === highlightAddress.toLowerCase();
+        {!loading &&
+          entries.map((entry) => {
+            const addr = entry.user.address;
+            const isMe = selfAddr && addr.toLowerCase() === selfAddr.toLowerCase();
+            const isHighlighted =
+              highlightAddress && addr.toLowerCase() === highlightAddress.toLowerCase();
 
-          return (
-            <Card
-              key={addr}
-              ref={(el) => { refs.current[addr] = el; }}
-              className={cn(
-                'transition-all duration-200 hover:shadow-md',
-                getRankCardStyle(entry.rank),
-                isHighlighted && 'ring-2 ring-primary'
-              )}
-            >
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  {/* Rank */}
-                  <div className="flex items-center justify-center w-8 h-8">
-                    {getRankIcon(entry.rank)}
-                  </div>
-
-                  {/* User Info */}
-                  <UserAvatar user={entry.user} size="md" />
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold text-sm truncate">
-                        {entry.user.ensName || `${entry.user.address.slice(0, 6)}...${entry.user.address.slice(-4)}`}
-                      </h3>
-                      {entry.user.isVerified && (
-                        <Badge variant="secondary" className="text-xs">✓</Badge>
-                      )}
-                      {isMe && (
-                        <Badge variant="default" className="text-[10px]">You</Badge>
-                      )}
-                      {xHandle && (entry.user.socialProfiles?.twitter || '').toLowerCase() === xHandle.toLowerCase() && !isMe && (
-                        <Badge variant="outline" className="text-[10px]">@{xHandle}</Badge>
-                      )}
-                    </div>
-
+            return (
+              <Card
+                key={addr}
+                className={cn(
+                  'transition-all duration-200 hover:shadow-md',
+                  getRankCardStyle(entry.rank),
+                  isHighlighted && 'ring-2 ring-primary',
+                )}
+              >
+                <CardContent className="p-4">
+                  {/* attach the ref to a real DOM node */}
+                  <div ref={(el) => void (refs.current[addr] = el)}>
                     <div className="flex items-center gap-3">
-                      <KarmaDisplay karma={entry.user.karma} size="sm" showLabel={false} />
+                      {/* Rank */}
+                      <div className="flex items-center justify-center w-8 h-8">
+                        {getRankIcon(entry.rank)}
+                      </div>
 
-                      {/* Rank change */}
-                      <div className="flex items-center gap-1">
-                        {getChangeIcon(entry.change)}
-                        {entry.change !== 0 && (
-                          <span
-                            className={cn(
-                              'text-xs font-medium',
-                              entry.change > 0 ? 'text-karma-positive' : 'text-karma-negative'
+                      {/* User Info */}
+                      <UserAvatar user={entry.user} size="md" />
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-semibold text-sm truncate">
+                            {entry.user.ensName ||
+                              `${entry.user.address.slice(0, 6)}...${entry.user.address.slice(-4)}`}
+                          </h3>
+                          {entry.user.isVerified && (
+                            <Badge variant="secondary" className="text-xs">
+                              ✓
+                            </Badge>
+                          )}
+                          {isMe && (
+                            <Badge variant="default" className="text-[10px]">
+                              You
+                            </Badge>
+                          )}
+                          {xHandle &&
+                            (entry.user.socialProfiles?.twitter || '').toLowerCase() ===
+                              xHandle.toLowerCase() &&
+                            !isMe && (
+                              <Badge variant="outline" className="text-[10px]">
+                                @{xHandle}
+                              </Badge>
                             )}
-                          >
-                            {Math.abs(entry.change)}
-                          </span>
-                        )}
+                        </div>
+
+                        <div className="flex items-center gap-3">
+                          <KarmaDisplay
+                            karma={entry.user.karma}
+                            size="sm"
+                            showLabel={false}
+                          />
+
+                          {/* Rank change */}
+                          <div className="flex items-center gap-1">
+                            {getChangeIcon(entry.change)}
+                            {entry.change !== 0 && (
+                              <span
+                                className={cn(
+                                  'text-xs font-medium',
+                                  entry.change > 0
+                                    ? 'text-karma-positive'
+                                    : 'text-karma-negative',
+                                )}
+                              >
+                                {Math.abs(entry.change)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Stats */}
+                      <div className="text-right">
+                        <div className="text-xs text-muted-foreground">
+                          Given: {entry.user.totalGiven ?? '—'}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          Received: {entry.user.totalReceived ?? '—'}
+                        </div>
                       </div>
                     </div>
                   </div>
-
-                  {/* Stats */}
-                  <div className="text-right">
-                    <div className="text-xs text-muted-foreground">
-                      Given: {entry.user.totalGiven ?? '—'}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Received: {entry.user.totalReceived ?? '—'}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+                </CardContent>
+              </Card>
+            );
+          })}
 
         {!loading && entries.length === 0 && (
           <Card>
@@ -255,9 +260,7 @@ export const LeaderboardPage = () => {
       {/* Footer info */}
       <Card className="border-dashed">
         <CardContent className="p-4 text-center">
-          <p className="text-sm text-muted-foreground mb-2">
-            Rankings update every hour
-          </p>
+          <p className="text-sm text-muted-foreground mb-2">Rankings update every hour</p>
           <p className="text-xs text-muted-foreground">
             Next redistribution will shuffle rankings randomly
           </p>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+// src/pages/ProfilePage.tsx
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,49 +11,39 @@ import { ExternalLink, Copy, ShieldCheck } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { User } from '@/types/karma';
 
-/**
- * ProfilePage:
- *  - Loads the signed-in user's Karam profile (from indexer/contracts if available; falls back to mocks)
- *  - Copy to clipboard for address
- *  - Open address/ENS in explorer
- *  - Connect socials (twitter/github/discord) via contract (platform ids 0/1/2)
- *  - Optional World ID verify CTA (no-op until worldid helper is added)
- */
-
-const PLATFORM_IDS: Record<'twitter' | 'github' | 'discord', number> = {
-  twitter: 0,
-  github: 1,
-  discord: 2,
-};
+type Platform = 'twitter' | 'github' | 'discord';
+const PLATFORM_IDS: Record<Platform, number> = { twitter: 0, github: 1, discord: 2 };
 
 export const ProfilePage = () => {
   const { toast } = useToast();
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState<boolean>(true);
   const [user, setUser] = useState<User | null>(null);
+
+  // fallbacks to keep the screen useful even before on-chain/indexer wiring
   const mockUser = useMemo(() => mockCurrentUser as unknown as User, []);
 
-  // env-based explorers (safe fallbacks)
-  const explorerBase = import.meta.env.VITE_EXPLORER_BASE as string | undefined; // e.g. https://explorer.world.org
-  const ensAppBase = (import.meta.env.VITE_ENS_APP_BASE as string | undefined) ?? 'https://app.ens.domains/name';
+  // Optional envs
+  const explorerBase = (import.meta.env.VITE_EXPLORER_BASE as string | undefined) || '';
+  const ensAppBase =
+    (import.meta.env.VITE_ENS_APP_BASE as string | undefined) ?? 'https://app.ens.domains/name';
+
+  // World ID client env (client-side)
+  const WORLD_APP_ID = import.meta.env.VITE_WORLD_APP_ID as `app_${string}` | undefined;
+  const WORLD_ACTION_ID = import.meta.env.VITE_WORLD_ACTION_ID as string | undefined;
+  const API_BASE = import.meta.env.VITE_API_BASE as string | undefined;
+  const VERIFY_ENDPOINT = API_BASE ? `${API_BASE}/worldid/verify` : undefined;
 
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
-      /* try {
-        // Try real libs first (dynamic import keeps this file working pre-integration)
-        const indexer: any = await import('@/lib/indexer').catch(() => null);
-
-        // 1) Load current user's profile
-        let profile: User | null = null;
-        if (indexer?.fetchSelfProfile) {
-          profile = await indexer.fetchSelfProfile();
-        }
-        if (!profile) profile = mockUser;
-
-        if (!alive) return;
-        setUser(profile);
+      try {
+        // If you later add a real indexer, drop it in here:
+        // const indexer = await import('@/lib/indexer').catch(() => null as any);
+        // const me = (await indexer?.fetchSelfProfile?.()) as User | null;
+        // setUser(me ?? mockUser);
+        setUser(mockUser);
       } catch (e: any) {
         if (!alive) return;
         toast({
@@ -63,84 +54,124 @@ export const ProfilePage = () => {
         setUser(mockUser);
       } finally {
         if (alive) setLoading(false);
-      } */
+      }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [mockUser, toast]);
 
-  const copyAddress = async () => {
+  const u: User = (user ?? mockUser);
+
+  const copyAddress = useCallback(async () => {
     try {
-      await navigator.clipboard.writeText((user ?? mockUser).address);
+      await navigator.clipboard.writeText(u.address);
       toast({ title: 'Address copied', description: 'Wallet address copied to clipboard.' });
     } catch {
       toast({ title: 'Copy failed', description: 'Please copy manually.', variant: 'destructive' });
     }
-  };
+  }, [toast, u.address]);
 
-  const openAddressInExplorer = () => {
-    const addr = (user ?? mockUser).address;
+  const openAddressInExplorer = useCallback(() => {
     if (!explorerBase) {
-      toast({ title: 'No explorer configured', description: 'Set VITE_EXPLORER_BASE to enable this.', variant: 'destructive' });
-      return;
-    }
-    window.open(`${explorerBase}/address/${addr}`, '_blank', 'noopener,noreferrer');
-  };
-
-  const openEnsInApp = () => {
-    const name = (user ?? mockUser).ensName;
-    if (!name) return;
-    window.open(`${ensAppBase}/${name}`, '_blank', 'noopener,noreferrer');
-  };
-
-  const connectSocial = async (platform: 'twitter' | 'github' | 'discord') => {
-    const username = window.prompt(`Enter your ${platform} username (without @)`);
-    if (!username) return;
-
-   /*  try {
-      // real contract call if available
-      const contracts: any = await import('@/lib/contracts').catch(() => null);
-      if (contracts?.connectSocial) {
-        await contracts.connectSocial(PLATFORM_IDS[platform], username);
-      } else {
-        // mock path: just update local UI
-        const u = user ?? mockUser;
-        (u.socialProfiles as any)[platform] = username;
-        setUser({ ...u });
-      }
-
-      toast({ title: 'Connected', description: `${platform} @${username} linked to your profile.` });
-
-      // optimistic local update (for real contracts too)
-      setUser(prev => {
-        const u = (prev ?? mockUser);
-        return {
-          ...u,
-          socialProfiles: { ...u.socialProfiles, [platform]: username },
-        };
-      });
-    } catch (e: any) {
       toast({
-        title: 'Failed to connect',
-        description: e?.shortMessage || e?.message || 'Please try again.',
+        title: 'No explorer configured',
+        description: 'Set VITE_EXPLORER_BASE to enable this.',
         variant: 'destructive',
       });
-    } */
-  };
+      return;
+    }
+    window.open(`${explorerBase}/address/${u.address}`, '_blank', 'noopener,noreferrer');
+  }, [explorerBase, toast, u.address]);
 
-  const verifyWorldId = async () => {
-    /* try {
-      const worldid: any = await import('@/lib/worldid').catch(() => null);
-      if (!worldid?.openWidgetAndVerify) {
+  const openEnsInApp = useCallback(() => {
+    if (!u.ensName) return;
+    window.open(`${ensAppBase}/${u.ensName}`, '_blank', 'noopener,noreferrer');
+  }, [ensAppBase, u.ensName]);
+
+  const connectSocial = useCallback(
+    async (platform: Platform) => {
+      const username = window.prompt(`Enter your ${platform} username (without @)`);
+      if (!username) return;
+
+      try {
+        const contracts = (await import('@/lib/contracts').catch(() => null)) as
+          | {
+              connectSocial?: (platformId: number, username: string) => Promise<`0x${string}`>;
+            }
+          | null;
+
+        if (contracts?.connectSocial) {
+          await contracts.connectSocial(PLATFORM_IDS[platform], username);
+        }
+        // optimistic UI update (covers both real + mock)
+        setUser(prev => {
+          const base = prev ?? mockUser;
+          return {
+            ...base,
+            socialProfiles: { ...base.socialProfiles, [platform]: username },
+          };
+        });
+
         toast({
-          title: 'World ID not configured',
-          description: 'Add @/lib/worldid to enable verification.',
+          title: 'Connected',
+          description: `${platform} @${username} linked to your profile.`,
+        });
+      } catch (e: any) {
+        toast({
+          title: 'Failed to connect',
+          description: e?.shortMessage || e?.message || 'Please try again.',
+          variant: 'destructive',
+        });
+      }
+    },
+    [mockUser, toast]
+  );
+
+  const verifyWorldId = useCallback(async () => {
+    if (!WORLD_APP_ID || !WORLD_ACTION_ID || !VERIFY_ENDPOINT) {
+      toast({
+        title: 'World ID not configured',
+        description: 'Set VITE_WORLD_APP_ID, VITE_WORLD_ACTION_ID & VITE_API_BASE.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      const worldid = (await import('@/lib/worldid').catch(() => null)) as
+        | {
+            verifyWithWorldID?: (opts: {
+              appId: `app_${string}`;
+              action: string;
+              signal?: string;
+              verificationLevel?: 'device' | 'orb' | 'phone';
+              verifyEndpoint: string;
+              includeCredentials?: boolean;
+            }) => Promise<{ isVerified: boolean }>;
+          }
+        | null;
+
+      if (!worldid?.verifyWithWorldID) {
+        toast({
+          title: 'World ID helper missing',
+          description: 'Add src/lib/worldid.tsx with verifyWithWorldID.',
           variant: 'destructive',
         });
         return;
       }
-      const ok = await worldid.openWidgetAndVerify();
-      if (ok) {
-        setUser(prev => prev ? { ...prev, isVerified: true } : prev);
+
+      const { isVerified } = await worldid.verifyWithWorldID({
+        appId: WORLD_APP_ID,
+        action: WORLD_ACTION_ID,
+        signal: u.address, // recommended as signal
+        verificationLevel: 'orb',
+        verifyEndpoint: VERIFY_ENDPOINT,
+        includeCredentials: true,
+      });
+
+      if (isVerified) {
+        setUser(prev => (prev ? { ...prev, isVerified: true } : prev));
         toast({ title: 'Verified ✓', description: 'World ID verification complete.' });
       } else {
         toast({ title: 'Verification canceled', description: 'No changes made.' });
@@ -151,10 +182,8 @@ export const ProfilePage = () => {
         description: e?.message ?? 'Please try again.',
         variant: 'destructive',
       });
-    } */
-  };
-
-  const u = (user ?? mockUser);
+    }
+  }, [VERIFY_ENDPOINT, WORLD_ACTION_ID, WORLD_APP_ID, toast, u.address]);
 
   return (
     <div className="p-4 space-y-4">
@@ -166,14 +195,19 @@ export const ProfilePage = () => {
             {u.ensName || `${u.address.slice(0, 6)}...${u.address.slice(-4)}`}
           </h2>
 
-          <KarmaDisplay karma={u.karma} size="lg" showLabel={false} className="justify-center mb-3" />
+          <KarmaDisplay
+            karma={u.karma}
+            size="lg"
+            showLabel={false}
+            className="justify-center mb-3"
+          />
 
           <div className="flex items-center justify-center gap-2 mb-2">
             <Badge variant={u.isVerified ? 'default' : 'secondary'} className="text-xs">
               {u.isVerified ? 'Verified ✓' : 'Not Verified'}
             </Badge>
             {!u.isVerified && (
-              <Button size="sm" variant="outline" onClick={verifyWorldId}>
+              <Button size="sm" variant="outline" onClick={verifyWorldId} disabled={loading}>
                 <ShieldCheck className="h-4 w-4 mr-1" /> Verify with World ID
               </Button>
             )}
@@ -199,7 +233,12 @@ export const ProfilePage = () => {
                     @{username}
                   </Badge>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={() => connectSocial(platform)}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => connectSocial(platform)}
+                    disabled={loading}
+                  >
                     Connect
                   </Button>
                 )}
@@ -221,7 +260,12 @@ export const ProfilePage = () => {
               <Button variant="ghost" size="sm" onClick={copyAddress} title="Copy address">
                 <Copy className="h-3 w-3" />
               </Button>
-              <Button variant="ghost" size="sm" onClick={openAddressInExplorer} title="Open in explorer">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={openAddressInExplorer}
+                title="Open in explorer"
+              >
                 <ExternalLink className="h-3 w-3" />
               </Button>
             </div>
@@ -244,3 +288,5 @@ export const ProfilePage = () => {
     </div>
   );
 };
+
+export default ProfilePage;

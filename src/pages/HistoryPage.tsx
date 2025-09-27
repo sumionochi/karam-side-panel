@@ -1,3 +1,4 @@
+// src/pages/HistoryPage.tsx
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,16 +9,80 @@ import { Filter, Download, Calendar } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import type { KarmaTransaction, User } from '@/types/karma';
 import { tsToMs, tsToIso } from '@/lib/time';
+import { publicClient } from '@/lib/contracts';
+import { parseAbiItem, type Address, type Hash } from 'viem';
 
-/**
- * HistoryPage:
- *  - Loads the signed-in user's history (tries `@/lib/indexer.fetchHistory(address)`; falls back to mocks)
- *  - Filter tabs: All / Given / Slashed / Received
- *  - Export CSV for the current filtered list
- */
+// ———————————————————————————————————————————————————————————————
+// ENV / Contract
+// ———————————————————————————————————————————————————————————————
+const KARAM_ADDRESS = import.meta.env.VITE_KARAM_ADDRESS as `0x${string}`;
+const FROM_BLOCK: bigint = (() => {
+  const v = import.meta.env.VITE_HISTORY_FROM_BLOCK as string | undefined;
+  const n = v ? BigInt(v) : 0n;
+  return n >= 0n ? n : 0n;
+})();
+
+// Events (match your deployed ABI exactly)
+const EV_KARMA_GIVEN = parseAbiItem(
+  'event KarmaGiven(address indexed from, address indexed to, uint256 amount, string reason, uint256 timestamp)'
+);
+const EV_KARMA_SLASHED = parseAbiItem(
+  'event KarmaSlashed(address indexed slasher, address indexed victim, uint256 amount, string reason, uint256 timestamp)'
+);
+
+// ———————————————————————————————————————————————————————————————
+// Helpers
+// ———————————————————————————————————————————————————————————————
+async function getSelfAddress(): Promise<Address | null> {
+  const eth = (window as any)?.ethereum;
+  if (!eth) return null;
+  try {
+    const addrs: `0x${string}`[] = await eth.request({ method: 'eth_accounts' });
+    if (addrs?.length) return addrs[0] as Address;
+    const req: `0x${string}`[] = await eth.request({ method: 'eth_requestAccounts' });
+    return (req?.[0] ?? null) as Address | null;
+  } catch {
+    return null;
+  }
+}
+
+function evToTxGiven(l: any): KarmaTransaction {
+  const args = l.args as {
+    from: Address; to: Address; amount: bigint; reason: string; timestamp: bigint;
+  };
+  return {
+    id: `${l.transactionHash as Hash}:${Number(l.logIndex ?? 0)}`,
+    type: 'give',
+    from: args.from,
+    to: args.to,
+    amount: Number(args.amount),
+    reason: args.reason ?? '',
+    timestamp: new Date(Number(args.timestamp) * 1000),
+    txHash: l.transactionHash as Hash,
+  };
+}
+
+function evToTxSlashed(l: any): KarmaTransaction {
+  const args = l.args as {
+    slasher: Address; victim: Address; amount: bigint; reason: string; timestamp: bigint;
+  };
+  return {
+    id: `${l.transactionHash as Hash}:${Number(l.logIndex ?? 0)}`,
+    type: 'slash',
+    from: args.slasher,
+    to: args.victim,
+    amount: Number(args.amount),
+    reason: args.reason ?? '',
+    timestamp: new Date(Number(args.timestamp) * 1000),
+    txHash: l.transactionHash as Hash,
+  };
+}
 
 type FilterKey = 'all' | 'give' | 'slash' | 'received';
 
+// ———————————————————————————————————————————————————————————————
+// Component
+// ———————————————————————————————————————————————————————————————
 export const HistoryPage = () => {
   const { toast } = useToast();
   const [filter, setFilter] = useState<FilterKey>('all');
@@ -26,31 +91,102 @@ export const HistoryPage = () => {
   const [user, setUser] = useState<User | null>(null);
   const [transactions, setTransactions] = useState<KarmaTransaction[]>([]);
 
-  // initial load
+  // initial load (on-chain logs + live watchers)
   useEffect(() => {
     let alive = true;
+    let unwatchGiven: (() => void) | null = null;
+    let unwatchSlashed: (() => void) | null = null;
+
     (async () => {
       setLoading(true);
-      /* try {
-        // dynamic imports so we compile before real libs land
-        const indexer: any = await import('@/lib/indexer').catch(() => null);
-
-        // 1) who am i?
-        let me: User | null = null;
-        if (indexer?.fetchSelfProfile) {
-          me = await indexer.fetchSelfProfile();
-        }
-        if (!me) me = mockCurrentUser as unknown as User;
+      try {
+        // 1) resolve self address (fallback to mocks if no wallet)
+        const addr = await getSelfAddress();
         if (!alive) return;
+
+        let me: User;
+        if (addr) {
+          me = {
+            ...(mockCurrentUser as unknown as User),
+            id: addr.toLowerCase(),
+            address: addr,
+          };
+        } else {
+          me = mockCurrentUser as unknown as User;
+        }
         setUser(me);
 
-        // 2) fetch history
-        if (indexer?.fetchHistory && me?.address) {
-          const hx = await indexer.fetchHistory(me.address, { limit: 200 }); // adjust as needed
+        // 2) fetch history from chain (if we have wallet + contract env)
+        if (addr && KARAM_ADDRESS) {
+          const [logsGiven, logsSlashed] = await Promise.all([
+            publicClient.getLogs({
+              address: KARAM_ADDRESS,
+              event: EV_KARMA_GIVEN,
+              fromBlock: FROM_BLOCK,
+              toBlock: 'latest',
+            }),
+            publicClient.getLogs({
+              address: KARAM_ADDRESS,
+              event: EV_KARMA_SLASHED,
+              fromBlock: FROM_BLOCK,
+              toBlock: 'latest',
+            }),
+          ]);
+
+          const txs = [
+            ...logsGiven.map(evToTxGiven),
+            ...logsSlashed.map(evToTxSlashed),
+          ].filter((tx) => tx.from.toLowerCase() === me.id || tx.to.toLowerCase() === me.id);
+
+          // newest first
+          txs.sort((a, b) => tsToMs(b.timestamp) - tsToMs(a.timestamp));
+
           if (!alive) return;
-          setTransactions(hx ?? []);
+          setTransactions(txs);
+
+          // 3) watch live events & append if relevant
+          unwatchGiven = publicClient.watchContractEvent({
+            address: KARAM_ADDRESS,
+            abi: [EV_KARMA_GIVEN] as const,
+            eventName: 'KarmaGiven',
+            onLogs: (logs) => {
+              if (!alive) return;
+              const next = logs
+                .map(evToTxGiven)
+                .filter((tx) => tx.from.toLowerCase() === me.id || tx.to.toLowerCase() === me.id);
+              if (next.length) {
+                setTransactions((prev) => {
+                  const merged = [...next, ...prev];
+                  merged.sort((a, b) => tsToMs(b.timestamp) - tsToMs(a.timestamp));
+                  // de-dupe by id
+                  const seen = new Set<string>();
+                  return merged.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
+                });
+              }
+            },
+          });
+
+          unwatchSlashed = publicClient.watchContractEvent({
+            address: KARAM_ADDRESS,
+            abi: [EV_KARMA_SLASHED] as const,
+            eventName: 'KarmaSlashed',
+            onLogs: (logs) => {
+              if (!alive) return;
+              const next = logs
+                .map(evToTxSlashed)
+                .filter((tx) => tx.from.toLowerCase() === me.id || tx.to.toLowerCase() === me.id);
+              if (next.length) {
+                setTransactions((prev) => {
+                  const merged = [...next, ...prev];
+                  merged.sort((a, b) => tsToMs(b.timestamp) - tsToMs(a.timestamp));
+                  const seen = new Set<string>();
+                  return merged.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true)));
+                });
+              }
+            },
+          });
         } else {
-          if (!alive) return;
+          // fallback to mocks (no wallet or missing envs)
           setTransactions(mockTransactions as unknown as KarmaTransaction[]);
         }
       } catch (e: any) {
@@ -65,33 +201,36 @@ export const HistoryPage = () => {
         setTransactions(mockTransactions as unknown as KarmaTransaction[]);
       } finally {
         if (alive) setLoading(false);
-      } */
+      }
     })();
-    return () => { alive = false; };
+
+    return () => {
+      alive = false;
+      unwatchGiven?.();
+      unwatchSlashed?.();
+    };
   }, [toast]);
 
-  const currentUserId = (user ?? (mockCurrentUser as unknown as User)).id;
+  const currentUserId = (user ?? (mockCurrentUser as unknown as User)).id.toLowerCase();
 
   // filter + counts
   const { filteredTransactions, counts } = useMemo(() => {
     const me = currentUserId;
-    const res = {
-      all: 0, give: 0, slash: 0, received: 0
-    };
+    const res = { all: 0, give: 0, slash: 0, received: 0 };
+
     const list = (transactions ?? []).filter((tx) => {
-      const isMine = tx.from === me || tx.to === me;
+      const isMine = tx.from?.toLowerCase?.() === me || tx.to?.toLowerCase?.() === me;
       if (!isMine) return false;
 
-      // count buckets
       res.all += 1;
-      if (tx.from === me && tx.type === 'give') res.give += 1;
-      if (tx.from === me && tx.type === 'slash') res.slash += 1;
-      if (tx.to === me) res.received += 1;
+      if (tx.from?.toLowerCase?.() === me && tx.type === 'give') res.give += 1;
+      if (tx.from?.toLowerCase?.() === me && tx.type === 'slash') res.slash += 1;
+      if (tx.to?.toLowerCase?.() === me) res.received += 1;
 
       switch (filter) {
-        case 'give':     return tx.from === me && tx.type === 'give';
-        case 'slash':    return tx.from === me && tx.type === 'slash';
-        case 'received': return tx.to === me;
+        case 'give':     return tx.from?.toLowerCase?.() === me && tx.type === 'give';
+        case 'slash':    return tx.from?.toLowerCase?.() === me && tx.type === 'slash';
+        case 'received': return tx.to?.toLowerCase?.() === me;
         default:         return true;
       }
     });
@@ -122,20 +261,20 @@ export const HistoryPage = () => {
         txHash: (tx as any).txHash ?? '',
       }));
 
-      // CSV
-      const headers = Object.keys(rows[0] ?? {
-        id: '', type: '', from: '', to: '', amount: '', reason: '', timestamp: '', txHash: '',
-      });
+      const headers = Object.keys(
+        rows[0] ?? { id: '', type: '', from: '', to: '', amount: '', reason: '', timestamp: '', txHash: '' }
+      );
       const csv = [
         headers.join(','),
         ...rows.map((r) =>
-          headers.map((h) => {
-            const val = (r as any)[h];
-            // escape quotes/commas
-            if (val == null) return '';
-            const s = String(val).replace(/"/g, '""');
-            return /[",\n]/.test(s) ? `"${s}"` : s;
-          }).join(',')
+          headers
+            .map((h) => {
+              const val = (r as any)[h];
+              if (val == null) return '';
+              const s = String(val).replace(/"/g, '""');
+              return /[",\n]/.test(s) ? `"${s}"` : s;
+            })
+            .join(',')
         ),
       ].join('\n');
 
@@ -169,7 +308,12 @@ export const HistoryPage = () => {
               <Calendar className="h-5 w-5" />
               Transaction History
             </div>
-            <Button variant="outline" size="sm" onClick={exportTransactions} disabled={loading || filteredTransactions.length === 0}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportTransactions}
+              disabled={loading || filteredTransactions.length === 0}
+            >
               <Download className="h-4 w-4" />
             </Button>
           </CardTitle>
@@ -243,7 +387,7 @@ export const HistoryPage = () => {
                 <div className="text-lg font-semibold text-karma-positive">
                   +{
                     transactions
-                      .filter(tx => tx.to === currentUserId)
+                      .filter(tx => tx.to?.toLowerCase?.() === currentUserId)
                       .reduce((s, tx) => s + (tx.amount ?? 0), 0)
                   }
                 </div>
@@ -253,7 +397,7 @@ export const HistoryPage = () => {
                 <div className="text-lg font-semibold text-primary">
                   -{
                     transactions
-                      .filter(tx => tx.from === currentUserId && tx.type === 'give')
+                      .filter(tx => tx.from?.toLowerCase?.() === currentUserId && tx.type === 'give')
                       .reduce((s, tx) => s + (tx.amount ?? 0), 0)
                   }
                 </div>

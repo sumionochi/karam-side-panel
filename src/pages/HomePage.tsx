@@ -1,25 +1,16 @@
+// src/pages/HomePage.tsx
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KarmaDisplay } from '@/components/KarmaDisplay';
 import { TransactionItem } from '@/components/TransactionItem';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { mockCurrentUser, mockTransactions } from '@/lib/mockData';
 import { TrendingUp, Clock, Gift, Users } from 'lucide-react';
 import { useXHandle } from '@/hooks/use-xhandle';
 import { useToast } from '@/hooks/use-toast';
 import type { User, KarmaTransaction } from '@/types/karma';
-
-/**
- * This HomePage:
- * - Listens to the detected X/Twitter handle via `useXHandle`
- * - Tries to fetch the corresponding Karam profile + recent txns (real libs if available)
- * - Falls back to mock data if real libs are not wired yet
- * - Shows a small “Detected X handle” hint so you can verify Step 1 wiring
- *
- * Expected real libs (add later; this file will still run with mocks until then):
- *   - `@/lib/indexer`: fetchProfileByXHandle(handle), fetchSelfProfile(), fetchRecentTransactions(address, limit)
- *   - `@/lib/contracts`: (optional) direct reads: getDailyUsage(address) etc.
- */
+import { verifyWithWorldID } from '@/lib/worldid';
 
 export const HomePage = () => {
   const { handle } = useXHandle();
@@ -45,8 +36,8 @@ export const HomePage = () => {
       // Try dynamic imports to avoid hard compile dependency before libs exist
       let indexer: any = null;
       let contracts: any = null;
-      /* try { indexer = await import('@/lib/indexer'); } catch */
-      /* try { contracts = await import('@/lib/contracts'); } catch */
+      /* try { indexer = await import('@/lib/indexer'); } catch { } */
+      /* try { contracts = await import('@/lib/contracts'); } catch { } */
 
       try {
         // 1) Load profile (by X handle if detected, else "self")
@@ -54,7 +45,7 @@ export const HomePage = () => {
 
         if (indexer && handle) {
           profile = await indexer.fetchProfileByXHandle(handle);
-        } 
+        }
         if (!profile && indexer && !handle) {
           // fallback: current user (e.g., connected wallet)
           profile = await indexer.fetchSelfProfile();
@@ -85,7 +76,9 @@ export const HomePage = () => {
               setDailyGiveUsed(Number(usage.totalGivenToday ?? 0));
               setDailySlashUsed(Number(usage.totalSlashedToday ?? 0));
             }
-          } catch { /* ignore, keep mock caps */ }
+          } catch {
+            // ignore, keep mock caps
+          }
         } else {
           // mock numbers that match your UI limits
           setDailyGiveUsed(mockUser.dailyGiveUsed);
@@ -112,21 +105,54 @@ export const HomePage = () => {
       }
     })();
 
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [handle, mockUser, toast]);
 
-  const stats = useMemo(() => ([
-    { title: 'Total Given',    value: user?.totalGiven ?? mockUser.totalGiven,       icon: Gift,       color: 'text-karma-positive' },
-    { title: 'Total Received', value: user?.totalReceived ?? mockUser.totalReceived, icon: TrendingUp, color: 'text-primary' },
-    { title: 'Active Days',    value: (user as any)?.activeDays ?? '—',              icon: Clock,      color: 'text-muted-foreground' },
-  ]), [user, mockUser]);
+  const stats = useMemo(
+    () => [
+      { title: 'Total Given', value: user?.totalGiven ?? mockUser.totalGiven, icon: Gift, color: 'text-karma-positive' },
+      { title: 'Total Received', value: user?.totalReceived ?? mockUser.totalReceived, icon: TrendingUp, color: 'text-primary' },
+      { title: 'Active Days', value: (user as any)?.activeDays ?? '—', icon: Clock, color: 'text-muted-foreground' },
+    ],
+    [user, mockUser]
+  );
+
+  const handleWorldVerify = async () => {
+    try {
+      const appId = import.meta.env.VITE_WORLDID_APP_ID as `app_${string}`;
+      const verifyEndpoint = `${import.meta.env.VITE_API_BASE}/worldid/verify`;
+      const action = 'karam-sidepanel';
+      const signal = (user ?? mockUser).address;
+
+      const result = await verifyWithWorldID({
+        appId,
+        action,
+        signal,
+        // verificationLevel: VerificationLevel.Orb, // optionally enforce
+        verifyEndpoint,
+      });
+
+      if (result.isVerified) {
+        setUser((prev) => (prev ? { ...prev, isVerified: true } : prev));
+        toast({ title: 'Verified ✓', description: 'World ID verification complete.' });
+      } else {
+        toast({ title: 'Verification failed', description: 'Please try again.', variant: 'destructive' });
+      }
+    } catch (e: any) {
+      toast({ title: 'Verification error', description: e?.message ?? String(e), variant: 'destructive' });
+    }
+  };
 
   return (
     <div className="p-4 space-y-4">
       {/* X Handle hint (for testing Step 1 wiring) */}
       <div className="text-xs text-muted-foreground">
         {handle ? (
-          <>Detected X handle: <span className="font-medium">@{handle}</span></>
+          <>
+            Detected X handle: <span className="font-medium">@{handle}</span>
+          </>
         ) : (
           <>Open a Twitter/X profile tab to auto-detect a handle.</>
         )}
@@ -137,19 +163,11 @@ export const HomePage = () => {
         <CardContent className="p-6">
           <div className="text-center">
             <h2 className="text-lg font-semibold mb-2">Your Karma</h2>
-            <div className="text-3xl font-bold mb-4">
-              {loading
-                ? '—'
-                : (user?.karma ?? mockUser.karma).toLocaleString()}
-            </div>
+            <div className="text-3xl font-bold mb-4">{loading ? '—' : (user?.karma ?? mockUser.karma).toLocaleString()}</div>
             <div className="flex justify-center gap-4 text-sm opacity-90">
-              <span>
-                Today: {loading ? '—' : dailyGiveUsed}/{dailyGiveLimit} given
-              </span>
+              <span>Today: {loading ? '—' : dailyGiveUsed}/{dailyGiveLimit} given</span>
               <span>•</span>
-              <span>
-                {loading ? '—' : dailySlashUsed}/{dailySlashLimit} slashed
-              </span>
+              <span>{loading ? '—' : dailySlashUsed}/{dailySlashLimit} slashed</span>
             </div>
           </div>
         </CardContent>
@@ -163,9 +181,7 @@ export const HomePage = () => {
             <Card key={stat.title}>
               <CardContent className="p-3 text-center">
                 <Icon className={`h-5 w-5 mx-auto mb-2 ${stat.color}`} />
-                <div className="text-lg font-semibold">
-                  {loading ? '—' : stat.value}
-                </div>
+                <div className="text-lg font-semibold">{loading ? '—' : stat.value}</div>
                 <div className="text-xs text-muted-foreground">{stat.title}</div>
               </CardContent>
             </Card>
@@ -184,14 +200,17 @@ export const HomePage = () => {
         <CardContent>
           <div className="flex items-center justify-between">
             <span className="text-sm">World ID</span>
-            <Badge variant={user?.isVerified ? 'default' : 'secondary'}>
-              {user?.isVerified ? 'Verified ✓' : 'Not Verified'}
-            </Badge>
+            <Badge variant={user?.isVerified ? 'default' : 'secondary'}>{user?.isVerified ? 'Verified ✓' : 'Not Verified'}</Badge>
           </div>
           {!user?.isVerified && (
-            <p className="text-xs text-muted-foreground mt-2">
-              Complete World ID verification to unlock full features
-            </p>
+            <>
+              <div className="mt-3 flex justify-end">
+                <Button size="sm" onClick={handleWorldVerify}>
+                  Verify with World ID
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">Complete World ID verification to unlock full features</p>
+            </>
           )}
         </CardContent>
       </Card>
@@ -203,16 +222,10 @@ export const HomePage = () => {
         </CardHeader>
         <CardContent className="space-y-2">
           {(loading ? [] : recentTransactions).map((transaction) => (
-            <TransactionItem
-              key={transaction.id}
-              transaction={transaction}
-              currentUserId={(user ?? mockUser).id}
-            />
+            <TransactionItem key={transaction.id} transaction={transaction} currentUserId={(user ?? mockUser).id} />
           ))}
           {!loading && recentTransactions.length === 0 && (
-            <div className="text-xs text-muted-foreground">
-              No recent transactions
-            </div>
+            <div className="text-xs text-muted-foreground">No recent transactions</div>
           )}
         </CardContent>
       </Card>
