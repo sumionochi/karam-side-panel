@@ -5,31 +5,34 @@ import {
   custom,
   defineChain,
   http,
-  parseAbi,
   getAddress,
-  getContract,
   type Address,
   type Hash,
 } from "viem";
-import { worldchainSepolia } from "viem/chains";
-import type { DailyUsage, PerRecipientUsage } from "@/types/karma";
+import type { DailyUsage, PerRecipientUsage } from "@/types/karma"; // keep if you still use types
+// ↑ You won't have live reads for DailyUsage/PerRecipientUsage with this ABI; keep for UI typing if needed.
 
-/** ───────────────────────── ENV */
+// ───────────────────────── ENV
+const RPC_URL = import.meta.env.VITE_RPC_URL as string;
+const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || 4801);
 const KARAM_ADDRESS = import.meta.env.VITE_KARAM_ADDRESS as `0x${string}`;
 
-/** ───────────────────────── Chain & Clients */
+// ───────────────────────── Chain & Clients (World Chain Sepolia: 4801)
+const chain = defineChain({
+  id: CHAIN_ID,
+  name: "World Chain Sepolia",
+  nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
+  rpcUrls: { default: { http: [RPC_URL] } },
+});
 
 export const publicClient = createPublicClient({
-  chain: worldchainSepolia,
-  transport: http(),
+  chain,
+  transport: http(RPC_URL),
 });
 
 const injected = typeof window !== "undefined" && (window as any).ethereum;
 export const walletClient = injected
-  ? createWalletClient({
-      chain: worldchainSepolia,
-      transport: custom((window as any).ethereum),
-    })
+  ? createWalletClient({ chain, transport: custom((window as any).ethereum) })
   : null;
 
 async function ensureAccount(): Promise<Address> {
@@ -37,38 +40,177 @@ async function ensureAccount(): Promise<Address> {
   try {
     const addrs = await walletClient.getAddresses();
     if (addrs.length) return addrs[0]!;
-  } catch {
-    /* noop */
-  }
+  } catch {}
   await (window as any).ethereum?.request?.({ method: "eth_requestAccounts" });
   const addrs = await walletClient.getAddresses();
   if (!addrs?.length) throw new Error("Wallet has no accounts.");
   return addrs[0]!;
 }
 
-/** ───────────────────────── ABI (Karam.sol) */
-const ABI = parseAbi([
-  "function karma(address) view returns (uint256)",
-  "function socialConnections(address) view returns (string twitterUsername, string githubUsername, string discordUsername)",
-  "function getDailyUsage(address) view returns (uint256 dayIdx, uint256 totalGivenToday, uint256 totalSlashedToday)",
-  "function getPerRecipientUsage(address,address) view returns (uint256 givenToToday, uint256 slashedToToday)",
-  "function register()",
-  "function connectSocial(uint8 _platform, string _username)",
-  "function giveKarma(address _to, uint256 _amount, string _reason)",
-  "function slashKarma(address _to, uint256 _amount)",
-  "event Registered(address indexed user, uint256 startKarma)",
-  "event SocialConnected(address indexed user, uint8 indexed platform, string username, uint256 bonus)",
-  "event Gave(address indexed from, address indexed to, uint256 amount, string reason)",
-  "event Slashed(address indexed from, address indexed to, uint256 amount, uint256 selfTax)",
-] as const);
+// ───────────────────────── ABI (from your deployed contract)
+export const KARAM_ABI = [
+  { type: "constructor", inputs: [], stateMutability: "nonpayable" },
+  {
+    type: "function",
+    name: "allUsers",
+    inputs: [{ name: "", type: "uint256", internalType: "uint256" }],
+    outputs: [{ name: "", type: "address", internalType: "address" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "connectSocial",
+    inputs: [
+      { name: "_whichPlatform", type: "uint256", internalType: "uint256" },
+      { name: "_username", type: "string", internalType: "string" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "dailyReset",
+    inputs: [],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "giveKarma",
+    inputs: [
+      { name: "_receiver", type: "address", internalType: "address" },
+      { name: "_amount", type: "uint256", internalType: "uint256" },
+      { name: "_reason", type: "string", internalType: "string" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "isRegistered",
+    inputs: [{ name: "", type: "address", internalType: "address" }],
+    outputs: [{ name: "", type: "bool", internalType: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "karma",
+    inputs: [{ name: "", type: "address", internalType: "address" }],
+    outputs: [{ name: "", type: "uint256", internalType: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "redistibuteKarma",
+    inputs: [],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "register",
+    inputs: [],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "slashKarma",
+    inputs: [
+      { name: "_receiver", type: "address", internalType: "address" },
+      { name: "_amount", type: "uint256", internalType: "uint256" },
+      { name: "_reason", type: "string", internalType: "string" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "socialConnections",
+    inputs: [{ name: "", type: "address", internalType: "address" }],
+    outputs: [
+      { name: "twitterUsername", type: "string", internalType: "string" },
+      { name: "githubUsername", type: "string", internalType: "string" },
+      { name: "discordUsername", type: "string", internalType: "string" },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "event",
+    name: "KarmaGiven",
+    inputs: [
+      { name: "from", type: "address", indexed: true, internalType: "address" },
+      { name: "to", type: "address", indexed: true, internalType: "address" },
+      {
+        name: "amount",
+        type: "uint256",
+        indexed: false,
+        internalType: "uint256",
+      },
+      {
+        name: "reason",
+        type: "string",
+        indexed: false,
+        internalType: "string",
+      },
+      {
+        name: "timestamp",
+        type: "uint256",
+        indexed: false,
+        internalType: "uint256",
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: "event",
+    name: "KarmaSlashed",
+    inputs: [
+      {
+        name: "slasher",
+        type: "address",
+        indexed: true,
+        internalType: "address",
+      },
+      {
+        name: "victim",
+        type: "address",
+        indexed: true,
+        internalType: "address",
+      },
+      {
+        name: "amount",
+        type: "uint256",
+        indexed: false,
+        internalType: "uint256",
+      },
+      {
+        name: "reason",
+        type: "string",
+        indexed: false,
+        internalType: "string",
+      },
+      {
+        name: "timestamp",
+        type: "uint256",
+        indexed: false,
+        internalType: "uint256",
+      },
+    ],
+    anonymous: false,
+  },
+  { type: "error", name: "AlreadyRegistered", inputs: [] },
+  { type: "error", name: "LimitExceeded", inputs: [] },
+  { type: "error", name: "NotEnoughKarma", inputs: [] },
+  { type: "error", name: "NotOwner", inputs: [] },
+] as const;
 
-/** ───────────────────────── Contract Instance (reads via direct client calls) */
+const CONTRACT = { address: KARAM_ADDRESS, abi: KARAM_ABI } as const;
 
-/* ---------------------------- READ ACTIONS (direct client calls) ---------------------------- */
+// ───────────────────────── READS
 export async function getKarma(addr: string): Promise<number> {
   const out = await publicClient.readContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
+    ...CONTRACT,
     functionName: "karma",
     args: [getAddress(addr)],
     authorizationList: undefined,
@@ -76,85 +218,59 @@ export async function getKarma(addr: string): Promise<number> {
   return Number(out as bigint);
 }
 
-export async function getDailyUsage(addr: string): Promise<DailyUsage> {
-  const result = await publicClient.readContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
-    functionName: "getDailyUsage",
-    args: [getAddress(addr)],
-    authorizationList: undefined,
-  });
-  const [dayIdx, given, slashed] = result as [bigint, bigint, bigint];
-  return {
-    dayIdx: Number(dayIdx),
-    totalGivenToday: Number(given),
-    totalSlashedToday: Number(slashed),
-  };
-}
-
-export async function getPerRecipientUsage(
-  user: string,
-  other: string
-): Promise<PerRecipientUsage> {
-  const result = await publicClient.readContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
-    functionName: "getPerRecipientUsage",
-    args: [getAddress(user), getAddress(other)],
-    authorizationList: undefined,
-  });
-  const [givenTo, slashedTo] = result as [bigint, bigint];
-  return {
-    givenToToday: Number(givenTo),
-    slashedToToday: Number(slashedTo),
-  };
-}
-
 export async function getSocialConnections(addr: string): Promise<{
   twitterUsername: string;
   githubUsername: string;
   discordUsername: string;
 }> {
-  const result = await publicClient.readContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
+  const res = await publicClient.readContract({
+    ...CONTRACT,
     functionName: "socialConnections",
     args: [getAddress(addr)],
     authorizationList: undefined,
   });
-  const [tw, gh, dc] = result as [string, string, string];
+  const [tw, gh, dc] = res as readonly [string, string, string];
   return { twitterUsername: tw, githubUsername: gh, discordUsername: dc };
 }
 
-/* ---------------------------- WRITE ACTIONS (simulate → write) --------------------------- */
-export async function register(): Promise<Hash> {
-  if (!walletClient) throw new Error("No injected wallet available.");
-  const account = await ensureAccount();
+export async function isRegistered(addr: string): Promise<boolean> {
+  const out = await publicClient.readContract({
+    ...CONTRACT,
+    functionName: "isRegistered",
+    args: [getAddress(addr)],
+    authorizationList: undefined,
+  });
+  return Boolean(out as boolean);
+}
 
+// ───────────────────────── WRITES
+async function ensureSigner(): Promise<Address> {
+  if (!walletClient) throw new Error("No injected wallet available.");
+  return ensureAccount();
+}
+
+export async function register(): Promise<Hash> {
+  const account = await ensureSigner();
   const { request } = await publicClient.simulateContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
+    ...CONTRACT,
     functionName: "register",
     account,
   });
-  return walletClient.writeContract(request);
+  return walletClient!.writeContract(request);
 }
 
 export async function connectSocial(
-  platformId: number,
+  platformId: number | bigint,
   username: string
 ): Promise<Hash> {
-  if (!walletClient) throw new Error("No injected wallet available.");
-  const account = await ensureAccount();
-
+  const account = await ensureSigner();
   const { request } = await publicClient.simulateContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
+    ...CONTRACT,
     functionName: "connectSocial",
-    args: [platformId, username],
+    args: [BigInt(platformId), username],
     account,
   });
-  return walletClient.writeContract(request);
+  return walletClient!.writeContract(request);
 }
 
 export async function giveKarma(
@@ -162,62 +278,59 @@ export async function giveKarma(
   amount: number,
   reason: string
 ): Promise<Hash> {
-  if (!walletClient) throw new Error("No injected wallet available.");
-  const account = await ensureAccount();
-
+  const account = await ensureSigner();
   const { request } = await publicClient.simulateContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
+    ...CONTRACT,
     functionName: "giveKarma",
     args: [getAddress(to), BigInt(amount), reason],
     account,
   });
-  return walletClient.writeContract(request);
+  return walletClient!.writeContract(request);
 }
 
-export async function slashKarma(to: string, amount: number): Promise<Hash> {
-  if (!walletClient) throw new Error("No injected wallet available.");
-  const account = await ensureAccount();
-
+export async function slashKarma(
+  to: string,
+  amount: number,
+  reason: string
+): Promise<Hash> {
+  const account = await ensureSigner();
   const { request } = await publicClient.simulateContract({
-    address: KARAM_ADDRESS,
-    abi: ABI,
+    ...CONTRACT,
     functionName: "slashKarma",
-    args: [getAddress(to), BigInt(amount)],
+    args: [getAddress(to), BigInt(amount), reason],
     account,
   });
-  return walletClient.writeContract(request);
+  return walletClient!.writeContract(request);
 }
 
-/* ----------------------------- EVENTS -------------------------------- */
+// Optional admin: spelling matches your ABI ("redistibuteKarma")
+export async function redistibuteKarma(): Promise<Hash> {
+  const account = await ensureSigner();
+  const { request } = await publicClient.simulateContract({
+    ...CONTRACT,
+    functionName: "redistibuteKarma",
+    account,
+  });
+  return walletClient!.writeContract(request);
+}
+
+// ───────────────────────── EVENTS
 export function watchKaramEvents(handlers: {
-  onGave?: (e: {
+  onKarmaGiven?: (e: {
     from: Address;
     to: Address;
     amount: number;
     reason: string;
+    timestamp: number;
     txHash: Hash;
     logIndex: number;
   }) => void;
-  onSlashed?: (e: {
-    from: Address;
-    to: Address;
+  onKarmaSlashed?: (e: {
+    slasher: Address;
+    victim: Address;
     amount: number;
-    selfTax: number;
-    txHash: Hash;
-    logIndex: number;
-  }) => void;
-  onRegistered?: (e: {
-    user: Address;
-    startKarma: number;
-    txHash: Hash;
-    logIndex: number;
-  }) => void;
-  onSocialConnected?: (e: {
-    user: Address;
-    platform: number;
-    username: string;
-    bonus: number;
+    reason: string;
+    timestamp: number;
     txHash: Hash;
     logIndex: number;
   }) => void;
@@ -226,9 +339,8 @@ export function watchKaramEvents(handlers: {
 
   unsubs.push(
     publicClient.watchContractEvent({
-      address: KARAM_ADDRESS,
-      abi: ABI,
-      eventName: "Gave",
+      ...CONTRACT,
+      eventName: "KarmaGiven",
       onLogs: (logs) => {
         for (const l of logs) {
           const a = (l as any).args as {
@@ -236,12 +348,14 @@ export function watchKaramEvents(handlers: {
             to: Address;
             amount: bigint;
             reason: string;
+            timestamp: bigint;
           };
-          handlers.onGave?.({
+          handlers.onKarmaGiven?.({
             from: a.from,
             to: a.to,
             amount: Number(a.amount),
             reason: a.reason ?? "",
+            timestamp: Number(a.timestamp),
             txHash: l.transactionHash!,
             logIndex: Number(l.logIndex ?? 0),
           });
@@ -252,67 +366,23 @@ export function watchKaramEvents(handlers: {
 
   unsubs.push(
     publicClient.watchContractEvent({
-      address: KARAM_ADDRESS,
-      abi: ABI,
-      eventName: "Slashed",
+      ...CONTRACT,
+      eventName: "KarmaSlashed",
       onLogs: (logs) => {
         for (const l of logs) {
           const a = (l as any).args as {
-            from: Address;
-            to: Address;
+            slasher: Address;
+            victim: Address;
             amount: bigint;
-            selfTax: bigint;
+            reason: string;
+            timestamp: bigint;
           };
-          handlers.onSlashed?.({
-            from: a.from,
-            to: a.to,
+          handlers.onKarmaSlashed?.({
+            slasher: a.slasher,
+            victim: a.victim,
             amount: Number(a.amount),
-            selfTax: Number(a.selfTax),
-            txHash: l.transactionHash!,
-            logIndex: Number(l.logIndex ?? 0),
-          });
-        }
-      },
-    })
-  );
-
-  unsubs.push(
-    publicClient.watchContractEvent({
-      address: KARAM_ADDRESS,
-      abi: ABI,
-      eventName: "Registered",
-      onLogs: (logs) => {
-        for (const l of logs) {
-          const a = (l as any).args as { user: Address; startKarma: bigint };
-          handlers.onRegistered?.({
-            user: a.user,
-            startKarma: Number(a.startKarma),
-            txHash: l.transactionHash!,
-            logIndex: Number(l.logIndex ?? 0),
-          });
-        }
-      },
-    })
-  );
-
-  unsubs.push(
-    publicClient.watchContractEvent({
-      address: KARAM_ADDRESS,
-      abi: ABI,
-      eventName: "SocialConnected",
-      onLogs: (logs) => {
-        for (const l of logs) {
-          const a = (l as any).args as {
-            user: Address;
-            platform: bigint;
-            username: string;
-            bonus: bigint;
-          };
-          handlers.onSocialConnected?.({
-            user: a.user,
-            platform: Number(a.platform),
-            username: a.username ?? "",
-            bonus: Number(a.bonus),
+            reason: a.reason ?? "",
+            timestamp: Number(a.timestamp),
             txHash: l.transactionHash!,
             logIndex: Number(l.logIndex ?? 0),
           });
