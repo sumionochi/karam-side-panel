@@ -1,94 +1,147 @@
 // KaramDisplay.tsx
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from "@/components/ui/tabs";
 import {
   KarmaService,
   type UserKarmaData,
   type KarmaEvent,
 } from "@/services/KarmaService";
 
+// ---- UI limits (keep in sync with contract if you later expose them) ----
+const GIVE_LIMIT_PER_DAY = 30;   // displayed in whole "karma" units (not wei)
+const SLASH_LIMIT_PER_DAY = 20;  // displayed in whole "karma" units (not wei)
+
 interface KarmaDisplayProps {
   twitterUsername: string | null;
 }
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+type ExtendedUserKarmaData = UserKarmaData & Partial<{
+  givenToday: string | number;      // daily given (normalized to whole karma)
+  slashedToday: string | number;    // daily slashed (normalized)
+  totalReceived: string | number;   // all-time
+  totalSlashed: string | number;    // all-time
+  twitterUsername: string;          // from chain (if you later expose inverse mapping it’s trivial)
+}>;
 
 export const KarmaDisplay = ({ twitterUsername }: KarmaDisplayProps) => {
-  const [karmaData, setKarmaData] = useState<UserKarmaData | null>(null);
+  const [karmaData, setKarmaData] = useState<ExtendedUserKarmaData | null>(null);
   const [recentEvents, setRecentEvents] = useState<KarmaEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // normalize twitter handle once
-  const normalizedHandle = useMemo(() => {
+  // ---------- helpers ----------
+  const normHandle = useMemo(() => {
     if (!twitterUsername) return null;
-    return twitterUsername.replace(/^@/, "").toLowerCase();
+    return twitterUsername.replace(/^@/, "").trim().toLowerCase();
   }, [twitterUsername]);
 
+  const asNum = (v: unknown): number => {
+    if (typeof v === "number") return v;
+    if (typeof v === "string") {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : 0;
+    }
+    return 0;
+  };
+
+  const pct = (value: number, max: number) => {
+    if (max <= 0) return 0;
+    const p = Math.max(0, Math.min(100, (value / max) * 100));
+    return Math.round(p);
+  };
+
   useEffect(() => {
-    if (!normalizedHandle) {
+    let cancelled = false;
+
+    // clear if no handle
+    if (!normHandle) {
       setKarmaData(null);
       setRecentEvents([]);
       setError(null);
+      setLoading(false);
       return;
     }
 
     const fetchKarmaData = async () => {
       setLoading(true);
       setError(null);
-
       try {
-        const karmaService = new KarmaService();
+        const svc: any = new KarmaService(); // `any` so we can call optional methods safely
 
-        // 1) Resolve address by twitter handle
-        const addr = await karmaService.getAddressByTwitterUsername(
-          normalizedHandle
-        );
+        // 1) resolve address by twitter handle
+        const address: string | null = await svc.getAddressByTwitterUsername(normHandle);
 
-        if (
-          !addr ||
-          typeof addr !== "string" ||
-          addr.toLowerCase() === ZERO_ADDRESS
-        ) {
-          setError("User not found in karma system");
-          setKarmaData(null);
-          setRecentEvents([]);
+        if (!address || address === "0x0000000000000000000000000000000000000000") {
+          if (!cancelled) {
+            setError("User not found in karma system");
+            setKarmaData(null);
+            setRecentEvents([]);
+          }
           return;
         }
 
-        // 2) User snapshot
-        const userData = await karmaService.getUserKarmaData(addr);
-        setKarmaData(userData);
+        // 2) base snapshot (works with your current service)
+        const base: UserKarmaData = await svc.getUserKarmaData(address);
 
-        // 3) Recent events (limit in UI)
-        const events = await karmaService.getRecentKarmaEvents(addr);
-        setRecentEvents(Array.isArray(events) ? events.slice(0, 10) : []);
+        // 3) optional enrichers (automatically used if you add them to KarmaService)
+        const extra: Partial<ExtendedUserKarmaData> = {};
+        try {
+          if (typeof svc.getUserUsageToday === "function") {
+            const { givenToday, slashedToday } = await svc.getUserUsageToday(address);
+            extra.givenToday = givenToday;
+            extra.slashedToday = slashedToday;
+          }
+        } catch {}
+
+        try {
+          if (typeof svc.getUserTotals === "function") {
+            const { totalReceived, totalSlashed } = await svc.getUserTotals(address);
+            extra.totalReceived = totalReceived;
+            extra.totalSlashed = totalSlashed;
+          }
+        } catch {}
+
+        try {
+          if (typeof svc.getTwitterByAddress === "function") {
+            extra.twitterUsername = await svc.getTwitterByAddress(address);
+          }
+        } catch {}
+
+        // 4) recent events
+        let events: KarmaEvent[] = [];
+        try {
+          events = await svc.getRecentKarmaEvents(address);
+        } catch {}
+
+        if (!cancelled) {
+          setKarmaData({ ...base, ...extra } as ExtendedUserKarmaData);
+          setRecentEvents(Array.isArray(events) ? events.slice(0, 10) : []);
+        }
       } catch (err) {
         console.error("Error fetching karma data:", err);
-        setError("Failed to fetch karma data");
-        setKarmaData(null);
-        setRecentEvents([]);
+        if (!cancelled) {
+          setError("Failed to fetch karma data");
+          setKarmaData(null);
+          setRecentEvents([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchKarmaData();
-  }, [normalizedHandle]);
+    return () => {
+      cancelled = true;
+    };
+  }, [normHandle]);
 
-  // --------- Top-level empty/loader/error states (before tabs) ----------
+  // ------------------- UI states -------------------
   if (!twitterUsername) {
     return (
-      <Card className="border-2 border-border bg-card shadow-sharp">
-        <div className="p-4 text-center">
+      <Card className="border-2 border-border bg-card shadow-sharp card-rounded card-pad">
+        <div className="text-center">
           <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-2">
             KARMA DATA
           </div>
@@ -102,12 +155,12 @@ export const KarmaDisplay = ({ twitterUsername }: KarmaDisplayProps) => {
 
   if (loading) {
     return (
-      <Card className="border-2 border-border bg-card shadow-sharp">
-        <div className="p-4 text-center">
+      <Card className="border-2 border-border bg-card shadow-sharp card-rounded card-pad">
+        <div className="text-center">
           <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-2">
             KARMA DATA
           </div>
-          <div className="text-lg font-black">LOADING...</div>
+          <div className="text-lg font-black">LOADING…</div>
         </div>
       </Card>
     );
@@ -115,8 +168,8 @@ export const KarmaDisplay = ({ twitterUsername }: KarmaDisplayProps) => {
 
   if (error || !karmaData) {
     return (
-      <Card className="border-2 border-border bg-card shadow-sharp">
-        <div className="p-4 text-center">
+      <Card className="border-2 border-border bg-card shadow-sharp card-rounded card-pad">
+        <div className="text-center">
           <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-2">
             KARMA DATA
           </div>
@@ -124,15 +177,15 @@ export const KarmaDisplay = ({ twitterUsername }: KarmaDisplayProps) => {
             {error || "NOT FOUND"}
           </div>
           <div className="text-xs text-muted-foreground mt-2">
-            @{normalizedHandle} not registered in karma system
+            @{normHandle} not registered in karma system
           </div>
         </div>
       </Card>
     );
   }
 
-  // --------- Profile tab (primary) ----------
-  const karmaValue = Number(karmaData.karma) || 0;
+  // -------- computed fields for display --------
+  const karmaValue = asNum((karmaData as any).karma); // service usually returns a normalized string
   const karmaColor =
     karmaValue > 500
       ? "text-karma-positive"
@@ -140,225 +193,225 @@ export const KarmaDisplay = ({ twitterUsername }: KarmaDisplayProps) => {
       ? "text-karma-negative"
       : "text-karma-neutral";
 
-  const shortAddr = `${karmaData.address.slice(0, 6)}...${karmaData.address.slice(
-    -4
-  )}`;
+  const givenToday = asNum(karmaData.givenToday);
+  const slashedToday = asNum(karmaData.slashedToday);
+  const totalReceived = asNum(karmaData.totalReceived);
+  const totalSlashed = asNum(karmaData.totalSlashed);
+  const netAllTime = totalReceived - totalSlashed;
 
+  const repScore =
+    totalReceived + totalSlashed > 0
+      ? (totalReceived / Math.max(1, totalSlashed)).toFixed(2)
+      : "—";
+
+  const shortAddr =
+    (karmaData as any).address
+      ? `${(karmaData as any).address.slice(0, 6)}…${(karmaData as any).address.slice(-4)}`
+      : "—";
+
+  const shownTwitter =
+    karmaData.twitterUsername || normHandle || (karmaData as any)?.socialConnections?.twitterUsername;
+
+  const github = (karmaData as any)?.socialConnections?.githubUsername || "";
+  const discord = (karmaData as any)?.socialConnections?.discordUsername || "";
+
+  // ------------------- render -------------------
   return (
-    <Tabs defaultValue="profile" className="w-full">
-      <TabsList className="grid grid-cols-6 gap-1 w-full">
-        <TabsTrigger value="profile" className="font-black text-xs">
-          Profile
-        </TabsTrigger>
-        <TabsTrigger value="today" className="font-black text-xs">
-          Today
-        </TabsTrigger>
-        <TabsTrigger value="alltime" className="font-black text-xs">
-          All-time
-        </TabsTrigger>
-        <TabsTrigger value="history" className="font-black text-xs">
-          History
-        </TabsTrigger>
-        <TabsTrigger value="admin" className="font-black text-xs">
-          Admin
-        </TabsTrigger>
-        <TabsTrigger value="directory" className="font-black text-xs">
-          Directory
-        </TabsTrigger>
-      </TabsList>
+    <div className="space-y-4">
+      {/* Main Karma Card */}
+      <Card className="border-2 border-border bg-card shadow-strong card-rounded card-pad">
+        <div className="space-y-3">
+          <div className="text-sm font-black uppercase tracking-wider text-muted-foreground">
+            KARMA PROFILE
+          </div>
 
-      {/* PROFILE (Fully implemented now) */}
-      <TabsContent value="profile" className="mt-4 space-y-4">
-        {/* Main Karma Card */}
-        <Card className="border-2 border-border bg-card shadow-strong">
-          <div className="p-4">
+          {/* stack on mobile, two columns on >= sm */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Username */}
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <span className="text-sm font-bold">USERNAME</span>
+              <span className="font-black mono-truncate">@{shownTwitter}</span>
+            </div>
+
+            {/* Status */}
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <span className="text-sm font-bold">STATUS</span>
+              {karmaData.isRegistered ? (
+                <Badge
+                  variant="outline"
+                  className="whitespace-nowrap text-[10px] px-2 py-[2px] border-karma-positive text-karma-positive font-black"
+                >
+                  REGISTERED
+                </Badge>
+              ) : (
+                <Badge
+                  variant="outline"
+                  className="whitespace-nowrap text-[10px] px-2 py-[2px] border-karma-negative text-karma-negative font-black"
+                >
+                  NOT REGISTERED
+                </Badge>
+              )}
+            </div>
+
+            {/* Karma */}
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <span className="text-sm font-bold">KARMA</span>
+              <span className={`font-black ${karmaColor} text-xl sm:text-2xl`}>
+                {Math.floor(karmaValue)}
+              </span>
+            </div>
+
+            {/* Address */}
+            <div className="flex flex-wrap items-center justify-between gap-1">
+              <span className="text-sm font-bold">ADDRESS</span>
+              <span className="text-xs text-muted-foreground mono-truncate">{shortAddr}</span>
+            </div>
+          </div>
+
+          {/* All-time quick stats (show only if service provided totals) */}
+          {(totalReceived > 0 || totalSlashed > 0) && (
+            <>
+              <Separator className="my-1" />
+              {/* On very narrow widths show 2 cols; Net spans both. On >= sm, show clean 3 cols */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="text-center">
+                  <div className="text-[10px] font-bold text-muted-foreground">RECEIVED</div>
+                  <div className="text-base font-black">{Math.floor(totalReceived)}</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-[10px] font-bold text-muted-foreground">SLASHED</div>
+                  <div className="text-base font-black">{Math.floor(totalSlashed)}</div>
+                </div>
+                <div className="text-center col-span-2 sm:col-span-1">
+                  <div className="text-[10px] font-bold text-muted-foreground">NET</div>
+                  <div className="text-base font-black">{Math.floor(netAllTime)}</div>
+                </div>
+              </div>
+              <div className="text-center text-[10px] text-muted-foreground">
+                Reputation score: <span className="font-black">{repScore}</span>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      {/* Social Connections */}
+      {(github || discord || shownTwitter) && (
+        <Card className="border-2 border-border bg-card shadow-sharp card-rounded card-pad">
+          <div>
             <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-3">
-              KARMA PROFILE
+              SOCIAL CONNECTIONS
+            </div>
+
+            {/* Use single column on mobile; align right value; wrap as needed */}
+            <div className="space-y-2">
+              {shownTwitter && (
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <span className="text-xs font-bold">TWITTER</span>
+                  <span className="text-xs font-black mono-truncate">@{shownTwitter}</span>
+                </div>
+              )}
+              {github && (
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <span className="text-xs font-bold">GITHUB</span>
+                  <span className="text-xs font-black mono-truncate">{github}</span>
+                </div>
+              )}
+              {discord && (
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <span className="text-xs font-bold">DISCORD</span>
+                  <span className="text-xs font-black mono-truncate">{discord}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Today usage bars (only if we have today numbers) */}
+      {(givenToday > 0 || slashedToday > 0) && (
+        <Card className="border-2 border-border bg-card shadow-sharp card-rounded card-pad">
+          <div>
+            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-3">
+              TODAY&apos;S USAGE
+            </div>
+
+            {/* Given today */}
+            <div className="space-y-1 mb-3">
+              <div className="flex items-center justify-between text-xs font-bold">
+                <span>Given</span>
+                <span>
+                  {Math.floor(givenToday)} / {GIVE_LIMIT_PER_DAY}
+                </span>
+              </div>
+              <div className="h-2 bg-muted rounded">
+                <div
+                  className="h-2 rounded bg-foreground/80"
+                  style={{ width: `${pct(givenToday, GIVE_LIMIT_PER_DAY)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Slashed today */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs font-bold">
+                <span>Slashed</span>
+                <span>
+                  {Math.floor(slashedToday)} / {SLASH_LIMIT_PER_DAY}
+                </span>
+              </div>
+              <div className="h-2 bg-muted rounded">
+                <div
+                  className="h-2 rounded bg-foreground/50"
+                  style={{ width: `${pct(slashedToday, SLASH_LIMIT_PER_DAY)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Recent Activity */}
+      {recentEvents.length > 0 && (
+        <Card className="border-2 border-border bg-card shadow-sharp card-rounded card-pad">
+          <div>
+            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-3">
+              RECENT ACTIVITY
             </div>
 
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold">USERNAME</span>
-                <span className="font-black">@{normalizedHandle}</span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold">KARMA</span>
-                <span className={`text-2xl font-black ${karmaColor}`}>
-                  {Math.floor(karmaValue)}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-bold">STATUS</span>
-                {karmaData.isRegistered ? (
-                  <Badge
-                    variant="outline"
-                    className="border-karma-positive text-karma-positive font-black"
-                  >
-                    REGISTERED
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="border-karma-negative text-karma-negative font-black"
-                  >
-                    NOT REGISTERED
-                  </Badge>
-                )}
-              </div>
-
-              <div className="text-xs text-muted-foreground">ADDRESS: {shortAddr}</div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Social Connections */}
-        {(karmaData.socialConnections.githubUsername ||
-          karmaData.socialConnections.discordUsername) && (
-          <Card className="border-2 border-border bg-card shadow-sharp">
-            <div className="p-4">
-              <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-3">
-                SOCIAL CONNECTIONS
-              </div>
-
-              <div className="space-y-2">
-                {karmaData.socialConnections.githubUsername && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">GITHUB</span>
-                    <span className="text-xs font-black">
-                      {karmaData.socialConnections.githubUsername}
+              {recentEvents.slice(0, 5).map((event, index) => (
+                <div key={`${event.type}-${event.timestamp}-${index}`} className="space-y-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Badge
+                      variant="outline"
+                      className={`whitespace-nowrap text-[10px] px-2 py-[2px] font-black ${
+                        event.type === "given"
+                          ? "border-karma-positive text-karma-positive"
+                          : "border-karma-negative text-karma-negative"
+                      }`}
+                    >
+                      {event.type === "given" ? "+" : "-"}
+                      {Math.floor(parseFloat(event.amount))}
+                    </Badge>
+                    <span className="text-[11px] text-muted-foreground">
+                      {new Date(event.timestamp * 1000).toLocaleDateString()}
                     </span>
                   </div>
-                )}
 
-                {karmaData.socialConnections.discordUsername && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold">DISCORD</span>
-                    <span className="text-xs font-black">
-                      {karmaData.socialConnections.discordUsername}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </Card>
-        )}
+                  {event.reason && (
+                    <div className="text-xs text-muted-foreground wrap-balance">"{event.reason}"</div>
+                  )}
 
-        {/* Recent Activity (keep a lightweight feed here for profile) */}
-        {recentEvents.length > 0 && (
-          <Card className="border-2 border-border bg-card shadow-sharp">
-            <div className="p-4">
-              <div className="text-sm font-black uppercase tracking-wider text-muted-foreground mb-3">
-                RECENT ACTIVITY
-              </div>
-
-              <div className="space-y-3">
-                {recentEvents.slice(0, 5).map((event, index) => (
-                  <div key={index} className="space-y-1">
-                    <div className="flex items-center justify-between">
-                      <Badge
-                        variant="outline"
-                        className={`text-xs font-black ${
-                          event.type === "given"
-                            ? "border-karma-positive text-karma-positive"
-                            : "border-karma-negative text-karma-negative"
-                        }`}
-                      >
-                        {event.type === "given" ? "+" : "-"}
-                        {Math.floor(parseFloat(event.amount))}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(event.timestamp * 1000).toLocaleDateString()}
-                      </span>
-                    </div>
-
-                    {event.reason && (
-                      <div className="text-xs text-muted-foreground">
-                        "{event.reason}"
-                      </div>
-                    )}
-
-                    {index < recentEvents.slice(0, 5).length - 1 && (
-                      <Separator className="my-2" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Card>
-        )}
-      </TabsContent>
-
-      {/* TODAY (placeholder for next step) */}
-      <TabsContent value="today" className="mt-4">
-        <Card className="border-2 border-border bg-card shadow-sharp">
-          <div className="p-6 text-center space-y-2">
-            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground">
-              TODAY
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Coming soon: live usage bars (given vs 30, slashed vs 20) & per-pair stats.
+                  {index < Math.min(5, recentEvents.length) - 1 && (
+                    <Separator className="my-2" />
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </Card>
-      </TabsContent>
-
-      {/* ALL-TIME (placeholder for later) */}
-      <TabsContent value="alltime" className="mt-4">
-        <Card className="border-2 border-border bg-card shadow-sharp">
-          <div className="p-6 text-center space-y-2">
-            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground">
-              ALL-TIME
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Coming soon: totals, net, first seen, top givers/recipients, reputation score.
-            </div>
-          </div>
-        </Card>
-      </TabsContent>
-
-      {/* HISTORY (placeholder for later) */}
-      <TabsContent value="history" className="mt-4">
-        <Card className="border-2 border-border bg-card shadow-sharp">
-          <div className="p-6 text-center space-y-2">
-            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground">
-              HISTORY
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Coming soon: full event feed & daily chart of net karma.
-            </div>
-          </div>
-        </Card>
-      </TabsContent>
-
-      {/* ADMIN / SYSTEM (placeholder for later) */}
-      <TabsContent value="admin" className="mt-4">
-        <Card className="border-2 border-border bg-card shadow-sharp">
-          <div className="p-6 text-center space-y-2">
-            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground">
-              ADMIN / SYSTEM
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Coming soon: contract address/chain, owner, lastUpdated, maintenance logs, user count.
-            </div>
-          </div>
-        </Card>
-      </TabsContent>
-
-      {/* DIRECTORY / LEADERBOARD (placeholder for later) */}
-      <TabsContent value="directory" className="mt-4">
-        <Card className="border-2 border-border bg-card shadow-sharp">
-          <div className="p-6 text-center space-y-2">
-            <div className="text-sm font-black uppercase tracking-wider text-muted-foreground">
-              DIRECTORY / LEADERBOARD
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Coming soon: users list & top karma holders (needs allUsersLength / getAllUsers).
-            </div>
-          </div>
-        </Card>
-      </TabsContent>
-    </Tabs>
+      )}
+    </div>
   );
 };

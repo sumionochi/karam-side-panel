@@ -1,106 +1,171 @@
 // Background script for Karma Tracker extension
-console.log('Karma Tracker background script loaded');
+console.log("[KarmaTracker] background loaded");
 
-// Install event
-chrome.runtime.onInstalled.addListener((details) => {
-  console.log('Karma Tracker extension installed:', details.reason);
-  
-  // Set up side panel availability
-  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-});
+const lastUsernameByTab = new Map();
 
-// Handle extension icon click
-chrome.action.onClicked.addListener(async (tab) => {
-  console.log('Extension icon clicked for tab:', tab.id);
-  
+function isTwitterUrl(url = "") {
   try {
-    // Open side panel for the current tab
-    await chrome.sidePanel.open({ 
-      windowId: tab.windowId 
-    });
-    console.log('Side panel opened successfully');
-  } catch (error) {
-    console.error('Error opening side panel:', error);
+    const u = new URL(url);
+    return /(^|\.)x\.com$|(^|\.)twitter\.com$/i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// Installed
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log("[KarmaTracker] onInstalled:", details.reason);
+  try {
+    // Make the side panel open when toolbar icon clicked
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+  } catch (e) {
+    console.warn("[KarmaTracker] setPanelBehavior not available?", e);
   }
 });
 
-// Monitor tab updates to enable/disable side panel
+// Toolbar icon → open side panel
+chrome.action.onClicked.addListener(async (tab) => {
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch (e) {
+    console.error("[KarmaTracker] open side panel failed:", e);
+  }
+});
+
+// Enable the side panel on Twitter/X tabs
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    console.log('Tab updated:', tab.url);
-    
-    const isTwitter = tab.url.includes('twitter.com') || tab.url.includes('x.com');
-    
+  if (!tab?.url) return;
+
+  if (changeInfo.status === "loading" || changeInfo.status === "complete") {
+    const onTwitter = isTwitterUrl(tab.url);
     try {
-      if (isTwitter) {
-        // Enable side panel for Twitter/X tabs
-        await chrome.sidePanel.setOptions({
-          tabId,
-          path: 'index.html',
-          enabled: true
-        });
-        
-        // Update action icon to indicate it's available
-        await chrome.action.setTitle({
-          tabId,
-          title: 'Open Karma Tracker (Twitter/X detected)'
-        });
-        
-        console.log('Side panel enabled for Twitter tab:', tabId);
-      } else {
-        // Keep side panel available but update title
-        await chrome.action.setTitle({
-          tabId,
-          title: 'Open Karma Tracker'
-        });
+      await chrome.sidePanel.setOptions({
+        tabId,
+        path: "index.html",
+        enabled: onTwitter
+      });
+
+      await chrome.action.setTitle({
+        tabId,
+        title: onTwitter
+          ? "Open Karma Tracker (Twitter/X detected)"
+          : "Open Karma Tracker"
+      });
+
+      if (onTwitter) {
+        console.log("[KarmaTracker] side panel enabled for tab", tabId);
       }
-    } catch (error) {
-      console.error('Error updating side panel options:', error);
+    } catch (e) {
+      console.error("[KarmaTracker] setOptions error:", e);
     }
   }
 });
 
-// Handle messages from content script and side panel
+// Relay & utility messaging
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Background received message:', message, 'from:', sender);
-  
-  if (message.action === 'getTabInfo') {
-    // Get current tab information
+  // Debug
+  // console.log("[KarmaTracker] bg got:", message, "from", sender);
+
+  // Side panel asks for active tab info
+  if (message?.action === "GET_TAB_INFO") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        sendResponse({
-          url: tabs[0].url,
-          title: tabs[0].title,
-          tabId: tabs[0].id
+      const t = tabs?.[0];
+      if (!t) return sendResponse({ error: "No active tab" });
+      sendResponse({ tabId: t.id, url: t.url, title: t.title });
+    });
+    return true; // async
+  }
+
+  // Side panel asks for the current Twitter handle
+  if (message?.action === "GET_TWITTER_HANDLE") {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const t = tabs?.[0];
+      if (!t?.id) return sendResponse({ error: "No active tab" });
+
+      if (!isTwitterUrl(t.url)) {
+        return sendResponse({ error: "Not on Twitter/X", url: t.url });
+      }
+
+      // Send message to the content script in the active tab
+      try {
+        const res = await chrome.tabs.sendMessage(t.id, {
+          type: "GET_TWITTER_HANDLE"
         });
-      } else {
-        sendResponse({ error: 'No active tab found' });
+        // Cache and return
+        if (res?.handle) lastUsernameByTab.set(t.id, res.handle);
+        sendResponse({
+          handle: res?.handle ?? null,
+          url: res?.url ?? t.url,
+          isTwitter: true
+        });
+      } catch (e) {
+        // This is where you'd see: "Could not establish connection. Receiving end does not exist."
+        console.warn("[KarmaTracker] content script not reachable:", e);
+
+        // Optional: programmatically (re)inject content.js, then retry (still Option B)
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: t.id },
+            files: ["content.js"]
+          });
+          const res2 = await chrome.tabs.sendMessage(t.id, {
+            type: "GET_TWITTER_HANDLE"
+          });
+          if (res2?.handle) lastUsernameByTab.set(t.id, res2.handle);
+          sendResponse({
+            handle: res2?.handle ?? null,
+            url: res2?.url ?? t.url,
+            isTwitter: true,
+            injected: true
+          });
+        } catch (e2) {
+          console.error("[KarmaTracker] injection+retry failed:", e2);
+          const cached = lastUsernameByTab.get(t.id) || null;
+          sendResponse({
+            handle: cached,
+            url: t.url,
+            isTwitter: true,
+            error: "Content script unreachable"
+          });
+        }
       }
     });
-    return true; // Keep message channel open for async response
+    return true; // async response
   }
-  
-  if (message.action === 'openSidePanel') {
+
+  // Content script pushes updates on SPA/route changes
+  if (message?.action === "USERNAME_CHANGED") {
+    const tabId = sender?.tab?.id;
+    if (tabId && message?.username !== undefined) {
+      lastUsernameByTab.set(tabId, message.username || null);
+      // Broadcast to any listeners (e.g., side panel)
+      chrome.runtime.sendMessage({
+        action: "USERNAME_CACHE_UPDATED",
+        tabId,
+        username: message.username || null,
+        url: message.url
+      }).catch(() => {});
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message?.action === "OPEN_SIDEPANEL") {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-      if (tabs[0]) {
-        try {
-          await chrome.sidePanel.open({ windowId: tabs[0].windowId });
-          sendResponse({ success: true });
-        } catch (error) {
-          sendResponse({ error: error.message });
-        }
+      const t = tabs?.[0];
+      if (!t) return sendResponse({ error: "No active tab" });
+      try {
+        await chrome.sidePanel.open({ windowId: t.windowId });
+        sendResponse({ success: true });
+      } catch (e) {
+        sendResponse({ error: String(e?.message || e) });
       }
     });
     return true;
   }
 });
 
-// Handle startup
-chrome.runtime.onStartup.addListener(() => {
-  console.log('Karma Tracker extension started');
-});
-
-// Log when side panel is opened
-chrome.sidePanel.onPanelOpenChanged?.addListener?.(() => {
-  console.log('Side panel state changed');
+// Optional: track when a tab is removed and clean up cache
+chrome.tabs.onRemoved.addListener((tabId) => {
+  lastUsernameByTab.delete(tabId);
 });
