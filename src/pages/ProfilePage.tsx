@@ -1,4 +1,3 @@
-// src/pages/ProfilePage.tsx
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,6 +18,7 @@ export const ProfilePage = () => {
 
   const [loading, setLoading] = useState<boolean>(true);
   const [user, setUser] = useState<User | null>(null);
+  const [connectBusy, setConnectBusy] = useState<Platform | null>(null);
 
   // fallbacks to keep the screen useful even before on-chain/indexer wiring
   const mockUser = useMemo(() => mockCurrentUser as unknown as User, []);
@@ -39,11 +39,47 @@ export const ProfilePage = () => {
     (async () => {
       setLoading(true);
       try {
-        // If you later add a real indexer, drop it in here:
-        // const indexer = await import('@/lib/indexer').catch(() => null as any);
-        // const me = (await indexer?.fetchSelfProfile?.()) as User | null;
-        // setUser(me ?? mockUser);
-        setUser(mockUser);
+        // Start from mock (always have something to render)
+        let base: User = { ...(mockUser as User) };
+
+        // Try to enhance from on-chain when contracts helper is present
+        const contracts = (await import('@/lib/contracts').catch(() => null)) as
+          | {
+              getKarma?: (addr: string) => Promise<number>;
+              getSocialConnections?: (
+                addr: string
+              ) => Promise<{ twitterUsername: string; githubUsername: string; discordUsername: string }>;
+            }
+          | null;
+
+        if (contracts?.getKarma) {
+          try {
+            const k = await contracts.getKarma(base.address);
+            base = { ...base, karma: Number(k) };
+          } catch {
+            // ignore; keep mock
+          }
+        }
+
+        if (contracts?.getSocialConnections) {
+          try {
+            const sc = await contracts.getSocialConnections(base.address);
+            base = {
+              ...base,
+              socialProfiles: {
+                ...base.socialProfiles,
+                twitter: sc.twitterUsername || base.socialProfiles.twitter,
+                github: sc.githubUsername || base.socialProfiles.github,
+                discord: sc.discordUsername || base.socialProfiles.discord,
+              },
+            };
+          } catch {
+            // ignore; keep mock
+          }
+        }
+
+        if (!alive) return;
+        setUser(base);
       } catch (e: any) {
         if (!alive) return;
         toast({
@@ -94,6 +130,7 @@ export const ProfilePage = () => {
       const username = window.prompt(`Enter your ${platform} username (without @)`);
       if (!username) return;
 
+      setConnectBusy(platform);
       try {
         const contracts = (await import('@/lib/contracts').catch(() => null)) as
           | {
@@ -106,10 +143,10 @@ export const ProfilePage = () => {
         }
         // optimistic UI update (covers both real + mock)
         setUser(prev => {
-          const base = prev ?? mockUser;
+          const baseUser = prev ?? mockUser;
           return {
-            ...base,
-            socialProfiles: { ...base.socialProfiles, [platform]: username },
+            ...baseUser,
+            socialProfiles: { ...baseUser.socialProfiles, [platform]: username },
           };
         });
 
@@ -123,6 +160,8 @@ export const ProfilePage = () => {
           description: e?.shortMessage || e?.message || 'Please try again.',
           variant: 'destructive',
         });
+      } finally {
+        setConnectBusy(null);
       }
     },
     [mockUser, toast]
@@ -225,6 +264,7 @@ export const ProfilePage = () => {
         <CardContent className="space-y-3">
           {(['twitter', 'github', 'discord'] as const).map((platform) => {
             const username = u.socialProfiles?.[platform] as string | undefined;
+            const busy = connectBusy === platform;
             return (
               <div key={platform} className="flex items-center justify-between">
                 <span className="text-sm capitalize">{platform}</span>
@@ -237,9 +277,9 @@ export const ProfilePage = () => {
                     variant="outline"
                     size="sm"
                     onClick={() => connectSocial(platform)}
-                    disabled={loading}
+                    disabled={loading || busy}
                   >
-                    Connect
+                    {busy ? 'Connecting…' : 'Connect'}
                   </Button>
                 )}
               </div>

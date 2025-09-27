@@ -37,10 +37,10 @@ export const LeaderboardPage = () => {
             const self: User | null = await indexer.fetchSelfProfile();
             if (alive && self?.address) setSelfAddr(self.address);
           } catch {
-            // ignore and fallback below
+            // ignore and use fallback below
           }
         }
-        if (!selfAddr && alive) {
+        if (alive && !selfAddr) {
           setSelfAddr((mockCurrentUser as unknown as User).address);
         }
 
@@ -48,9 +48,8 @@ export const LeaderboardPage = () => {
         if (indexer?.fetchLeaderboard) {
           const top: LeaderboardEntry[] = await indexer.fetchLeaderboard(50);
           if (!alive) return;
-          setEntries(top ?? []);
+          setEntries((top ?? []).slice(0, 50));
         } else {
-          // fallback to mocks
           if (!alive) return;
           setEntries(mockLeaderboard as unknown as LeaderboardEntry[]);
         }
@@ -61,7 +60,6 @@ export const LeaderboardPage = () => {
           description: e?.message ?? 'Please try again.',
           variant: 'destructive',
         });
-        // fallback
         setEntries(mockLeaderboard as unknown as LeaderboardEntry[]);
       } finally {
         if (alive) setLoading(false);
@@ -71,6 +69,7 @@ export const LeaderboardPage = () => {
     return () => {
       alive = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toast]);
 
   // highlight priorities: detected X handle > signed-in self
@@ -207,11 +206,7 @@ export const LeaderboardPage = () => {
                         </div>
 
                         <div className="flex items-center gap-3">
-                          <KarmaDisplay
-                            karma={entry.user.karma}
-                            size="sm"
-                            showLabel={false}
-                          />
+                          <KarmaDisplay karma={entry.user.karma} size="sm" showLabel={false} />
 
                           {/* Rank change */}
                           <div className="flex items-center gap-1">

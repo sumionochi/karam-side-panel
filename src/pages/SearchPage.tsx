@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { UserCard } from '@/components/UserCard';
 import { KarmaModal } from '@/components/KarmaModal';
-import { User } from '@/types/karma';
+import type { User } from '@/types/karma';
 import { mockUsers, mockCurrentUser, mockSmartContractFunctions } from '@/lib/mockData';
 import { Search, Scan } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -13,7 +13,8 @@ function looksLikeAddress(q: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(q.trim());
 }
 function looksLikeENS(q: string) {
-  return /\./.test(q) && !q.startsWith('0x'); // simple heuristic
+  const s = q.trim();
+  return s.includes('.') && !s.startsWith('0x');
 }
 
 export const SearchPage = () => {
@@ -45,76 +46,131 @@ export const SearchPage = () => {
     if (!q) return;
 
     setIsSearching(true);
-    /* try {
-      // try dynamic imports so this compiles even before real libs exist
-      const ens: any = await import('@/lib/ens').catch(() => null);
-      const indexer: any = await import('@/lib/indexer').catch(() => null);
+    try {
+      // Try dynamic imports so the app builds even if libs aren’t present yet
+      const indexer = (await import('@/lib/indexer').catch(() => null)) as
+        | {
+            fetchProfileByAddress?: (addr: string) => Promise<User | null>;
+            fetchProfileByXHandle?: (handle: string) => Promise<User | null>;
+            searchProfiles?: (q: string) => Promise<User[]>;
+          }
+        | null;
 
-      // 1) address / ENS short-circuit (preferred)
+      const ens = (await import('@/lib/ens').catch(() => null)) as
+        | {
+            resolveName?: (name: string) => Promise<string | null>;
+          }
+        | null;
+
+      // 1) Direct address
       if (looksLikeAddress(q)) {
+        let u: User | null = null;
         if (indexer?.fetchProfileByAddress) {
-          const u = await indexer.fetchProfileByAddress(q);
-          setSearchResults(u ? [u] : []);
+          u = await indexer.fetchProfileByAddress(q);
         } else {
-          // mock fallback
-          setSearchResults(mockUsers.filter(u => u.address.toLowerCase() === q.toLowerCase()));
+          u = mockUsers.find((m) => m.address.toLowerCase() === q.toLowerCase()) as User | null;
         }
-        if (searchResults.length === 0) {
-          toast({ title: 'No users found', description: 'Address not linked to a Karam profile yet.' });
+        setSearchResults(u ? [u] : []);
+        if (!u) {
+          toast({
+            title: 'No users found',
+            description: 'Address not linked to a Karam profile yet.',
+          });
         }
         return;
       }
 
+      // 2) ENS
       if (looksLikeENS(q)) {
         let addr: string | null = null;
         if (ens?.resolveName) {
           try {
             addr = await ens.resolveName(q);
-          } catch { addr = null; }
+          } catch {
+            addr = null;
+          }
         }
         if (addr && indexer?.fetchProfileByAddress) {
           const u = await indexer.fetchProfileByAddress(addr);
           setSearchResults(u ? [u] : []);
+          if (!u) {
+            toast({
+              title: 'No users found',
+              description: 'ENS resolved but user not on Karam yet.',
+            });
+          }
         } else {
-          // mock ENS fallback
-          const results = mockUsers.filter(u =>
-            (u.ensName?.toLowerCase() === q.toLowerCase()) ||
-            (u.address.toLowerCase() === (addr ?? '').toLowerCase())
-          );
+          // mock ENS fallback: match by ensName or resolved addr
+          const results = mockUsers.filter(
+            (u) =>
+              u.ensName?.toLowerCase() === q.toLowerCase() ||
+              (addr && u.address.toLowerCase() === addr.toLowerCase())
+          ) as User[];
           setSearchResults(results);
-        }
-
-        if (searchResults.length === 0) {
-          toast({ title: 'No users found', description: 'ENS resolved but user not on Karam yet.' });
+          if (results.length === 0) {
+            toast({
+              title: 'No users found',
+              description: 'ENS resolved but no profile found.',
+            });
+          }
         }
         return;
       }
 
-      // 2) free-text / social search
-      if (indexer?.searchProfiles) {
-        const results = await indexer.searchProfiles(q);
-        setSearchResults(results ?? []);
-        if (!results || results.length === 0) {
-          toast({ title: 'No users found', description: 'Try ENS, wallet address, or exact social handle.' });
+      // 3) If user typed @handle, try X handle
+      if (q.startsWith('@')) {
+        const handleOnly = q.replace(/^@/, '');
+        let u: User | null = null;
+        if (indexer?.fetchProfileByXHandle) {
+          u = await indexer.fetchProfileByXHandle(handleOnly);
+        } else {
+          u = (mockUsers.find((m) => m.socialProfiles.twitter?.toLowerCase() === handleOnly.toLowerCase()) ??
+            null) as User | null;
         }
-      } else {
-        // mock search logic (fallback)
-        await new Promise(r => setTimeout(r, 600));
-        const results = mockUsers.filter(user =>
-          user.ensName?.toLowerCase().includes(q.toLowerCase()) ||
-          user.address.toLowerCase().includes(q.toLowerCase()) ||
-          Object.values(user.socialProfiles).some(profile =>
-            profile?.toLowerCase().includes(q.toLowerCase())
-          )
-        );
+        setSearchResults(u ? [u] : []);
+        if (!u) {
+          toast({
+            title: 'No users found',
+            description: 'This handle is not linked to any profile yet.',
+          });
+        }
+        return;
+      }
+
+      // 4) Free-text search via indexer, fallback to mock fuzzy
+      if (indexer?.searchProfiles) {
+        const results = (await indexer.searchProfiles(q)) ?? [];
         setSearchResults(results);
         if (results.length === 0) {
-          toast({ title: 'No users found', description: 'Try ENS name, address, or social handle' });
+          toast({
+            title: 'No users found',
+            description: 'Try ENS, wallet address, or exact social handle.',
+          });
+        }
+      } else {
+        // mock fuzzy search
+        await new Promise((r) => setTimeout(r, 400));
+        const results = mockUsers.filter((user) => {
+          const ql = q.toLowerCase();
+          return (
+            user.ensName?.toLowerCase().includes(ql) ||
+            user.address.toLowerCase().includes(ql) ||
+            Object.values(user.socialProfiles).some((profile) =>
+              profile?.toLowerCase().includes(ql)
+            )
+          );
+        }) as User[];
+        setSearchResults(results);
+        if (results.length === 0) {
+          toast({
+            title: 'No users found',
+            description: 'Try ENS name, address, or social handle.',
+          });
         }
       }
     } finally {
       setIsSearching(false);
-    } */
+    }
   };
 
   const handleTwitterSearch = async () => {
@@ -129,7 +185,9 @@ export const SearchPage = () => {
 
     setIsSearching(true);
     try {
-      const indexer: any = await import('@/lib/indexer').catch(() => null);
+      const indexer = (await import('@/lib/indexer').catch(() => null)) as
+        | { fetchProfileByXHandle?: (handle: string) => Promise<User | null> }
+        | null;
 
       if (indexer?.fetchProfileByXHandle) {
         const user = await indexer.fetchProfileByXHandle(xHandle);
@@ -149,7 +207,7 @@ export const SearchPage = () => {
         }
       } else {
         // mock fallback: pick a user with any twitter handle
-        const twitterUser = mockUsers.find(u => !!u.socialProfiles.twitter);
+        const twitterUser = mockUsers.find((u) => !!u.socialProfiles.twitter) as User | undefined;
         if (twitterUser) {
           setSearchResults([twitterUser]);
           toast({
@@ -174,13 +232,19 @@ export const SearchPage = () => {
     if (!selectedUser) return;
 
     try {
-      const contracts: any = await import('@/lib/contracts').catch(() => null);
+      const contracts = (await import('@/lib/contracts').catch(() => null)) as
+        | {
+            giveKarma?: (to: string, amount: number, reason: string) => Promise<`0x${string}`>;
+            slashKarma?: (to: string, amount: number) => Promise<`0x${string}`>;
+          }
+        | null;
 
       if (modalType === 'give') {
         if (contracts?.giveKarma) {
           await contracts.giveKarma(selectedUser.address, amount, reason || '');
         } else {
-          await contracts.slashKarma(selectedUser.address, amount, reason || '');
+          // mock path
+          await mockSmartContractFunctions.giveKarma(selectedUser.address, amount, reason || '');
         }
         toast({
           title: 'Karma sent! ✨',
@@ -190,18 +254,14 @@ export const SearchPage = () => {
         if (contracts?.slashKarma) {
           await contracts.slashKarma(selectedUser.address, amount);
         } else {
-          // mock
-          await mockSmartContractFunctions.slashKarma(selectedUser.address, amount, reason);
+          // mock path
+          await mockSmartContractFunctions.slashKarma(selectedUser.address, amount, reason || '');
         }
         toast({
           title: 'Karma slashed ⚡',
           description: `Slashed ${amount} karma from ${selectedUser.ensName || selectedUser.address}`,
         });
       }
-
-      // optional: refresh results/profile after tx via indexer
-      // const indexer: any = await import('@/lib/indexer').catch(() => null);
-      // if (indexer?.refresh) await indexer.refresh();
 
       setIsModalOpen(false);
     } catch (error: any) {
@@ -229,12 +289,7 @@ export const SearchPage = () => {
           </Button>
         </div>
 
-        <Button
-          variant="outline"
-          onClick={handleTwitterSearch}
-          className="w-full"
-          size="sm"
-        >
+        <Button variant="outline" onClick={handleTwitterSearch} className="w-full" size="sm">
           <Scan className="h-4 w-4 mr-2" />
           Find user from current Twitter page {xHandle ? `( @${xHandle} )` : ''}
         </Button>
