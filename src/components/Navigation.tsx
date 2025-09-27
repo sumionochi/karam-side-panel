@@ -1,19 +1,22 @@
 import { Button } from '@/components/ui/button';
-import { Home, Users, History, Trophy, Search, User } from 'lucide-react';
+import { Home, History, Trophy, Search, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { TabKey } from '@/types/ui';
+import type { Dispatch, SetStateAction } from 'react';
 
 interface NavigationProps {
-  activeTab: string;
-  onTabChange: (tab: string) => void;
+  activeTab: TabKey;
+  // accept the actual React setter so setActiveTab can be passed directly
+  onTabChange: Dispatch<SetStateAction<TabKey>>;
 }
 
 export const Navigation = ({ activeTab, onTabChange }: NavigationProps) => {
-  const tabs = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'search', label: 'Search', icon: Search },
+  const tabs: Array<{ id: TabKey; label: string; icon: any }> = [
+    { id: 'home',        label: 'Home',        icon: Home },
+    { id: 'search',      label: 'Search',      icon: Search },
     { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
-    { id: 'history', label: 'History', icon: History },
-    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'history',     label: 'History',     icon: History },
+    { id: 'profile',     label: 'Profile',     icon: User },
   ];
 
   return (
@@ -22,7 +25,7 @@ export const Navigation = ({ activeTab, onTabChange }: NavigationProps) => {
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
-          
+
           return (
             <Button
               key={tab.id}
