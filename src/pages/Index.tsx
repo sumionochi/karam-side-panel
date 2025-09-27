@@ -7,6 +7,8 @@ import KarmaToday from "@/components/KarmaToday";
 import { WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS } from "@/constants/contract";
 import { KarmaService } from "@/services/KarmaService";
 import KarmaAllTime from "@/components/KarmaAllTime";
+import KarmaHistory from "@/components/KarmaHistory";
+import KarmaAdmin from "@/components/KarmaAdmin";
 
 declare const chrome: any;
 
@@ -146,16 +148,12 @@ const Index = () => {
           <KarmaAllTime twitterUsername={normHandle} addressOverride={address} />
         </TabsContent>
 
-        <TabsContent value="history">
-          <Card className="border-2 border-border bg-card card-rounded shadow-sharp card-pad text-center text-xs text-muted-foreground">
-            History view coming soon. (Timeline, filters, pagination)
-          </Card>
+        <TabsContent value="history" className="space-y-4">
+          <KarmaHistory twitterUsername={normHandle} addressOverride={address} />
         </TabsContent>
 
-        <TabsContent value="admin">
-          <Card className="border-2 border-border bg-card card-rounded shadow-sharp card-pad text-center text-xs text-muted-foreground">
-            Admin/System view coming soon. (Owner, lastUpdated, maintenance events)
-          </Card>
+        <TabsContent value="admin" className="space-y-4">
+          <KarmaAdmin />
         </TabsContent>
 
         <TabsContent value="directory">
