@@ -1,45 +1,35 @@
-// src/pages/Index.tsx
 import { useState } from 'react';
-import { Header } from '@/components/Header';
-import { Navigation } from '@/components/Navigation';
-import { HomePage } from './HomePage';
-import { SearchPage } from './SearchPage';
-import { LeaderboardPage } from './LeaderboardPage';
-import { HistoryPage } from './HistoryPage';
-import { ProfilePage } from './ProfilePage';
-
-export type TabKey = 'home' | 'search' | 'leaderboard' | 'history' | 'profile';
+import { TwitterDetector } from '@/components/TwitterDetector';
+import { KarmaDisplay } from '@/components/KarmaDisplay';
+import { WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS } from '@/constants/contract';
 
 const Index = () => {
-  const [activeTab, setActiveTab] = useState<TabKey>('home');
-
-  const renderPage = () => {
-    switch (activeTab) {
-      case 'search':
-        return <SearchPage />;
-      case 'leaderboard':
-        return <LeaderboardPage />;
-      case 'history':
-        return <HistoryPage />;
-      case 'profile':
-        return <ProfilePage />;
-      case 'home':
-      default:
-        return <HomePage />;
-    }
-  };
+  const [detectedUsername, setDetectedUsername] = useState<string | null>(null);
 
   return (
-    <div className="min-h-screen bg-background w-full max-w-md mx-auto border-x border-border">
-      <Header />
-      {/* If your <Navigation /> expects (tab: string) => void, adapt via a tiny wrapper */}
-      <Navigation
-        activeTab={activeTab}
-        onTabChange={(tab) => setActiveTab(tab as TabKey)}
-      />
-      <main className="pb-4">
-        {renderPage()}
-      </main>
+    <div className="karma-panel min-h-screen p-4 space-y-4">
+      {/* Header */}
+      <div className="text-center py-4 border-b-2 border-border">
+        <h1 className="text-2xl font-black uppercase tracking-wider">
+          KARMA TRACKER
+        </h1>
+        <p className="text-xs text-muted-foreground font-bold mt-1">
+          BLOCKCHAIN KARMA SYSTEM
+        </p>
+      </div>
+
+      {/* Twitter Detection */}
+      <TwitterDetector onUsernameDetected={setDetectedUsername} />
+
+      {/* Karma Display */}
+      <KarmaDisplay twitterUsername={detectedUsername} />
+
+      {/* Footer */}
+      <div className="text-center pt-4 border-t-2 border-border">
+        <div className="text-xs text-muted-foreground">
+          WORLD SEPOLIA • CONTRACT: {WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS?.slice(0, 8)}...
+        </div>
+      </div>
     </div>
   );
 };

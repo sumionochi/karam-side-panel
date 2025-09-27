@@ -1,152 +1,106 @@
-// public/background.js
+// Background script for Karma Tracker extension
+console.log('Karma Tracker background script loaded');
 
-// Open sidepanel when the toolbar icon is clicked
+// Install event
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log('Karma Tracker extension installed:', details.reason);
+  
+  // Set up side panel availability
+  chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+});
+
+// Handle extension icon click
 chrome.action.onClicked.addListener(async (tab) => {
-    if (!tab?.id) return;
-    if (chrome.sidePanel?.open) {
-      await chrome.sidePanel.open({ tabId: tab.id });
-    }
-  });
+  console.log('Extension icon clicked for tab:', tab.id);
   
-  // --- X handle extraction helpers ---
-  
-  function extractXHandle(urlString) {
+  try {
+    // Open side panel for the current tab
+    await chrome.sidePanel.open({ 
+      windowId: tab.windowId 
+    });
+    console.log('Side panel opened successfully');
+  } catch (error) {
+    console.error('Error opening side panel:', error);
+  }
+});
+
+// Monitor tab updates to enable/disable side panel
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url) {
+    console.log('Tab updated:', tab.url);
+    
+    const isTwitter = tab.url.includes('twitter.com') || tab.url.includes('x.com');
+    
     try {
-      const u = new URL(urlString);
-      const isX = u.hostname === "x.com" || u.hostname === "twitter.com";
-      if (!isX) return null;
-  
-      const [first] = u.pathname.split("/").filter(Boolean);
-      if (!first) return null;
-  
-      // ignore non-profile roots
-      const banned = new Set([
-        "home", "i", "explore", "compose", "messages",
-        "notifications", "settings", "search", "login", "signup",
-        "tos", "privacy"
-      ]);
-      if (banned.has(first)) return null;
-  
-      // heuristic bounds
-      if (first.length < 1 || first.length > 32) return null;
-  
-      return first;
-    } catch {
-      return null;
-    }
-  }
-  
-  async function setSession(key, value) {
-    const api = chrome.storage?.session ?? chrome.storage.local;
-    try {
-      await api.set({ [key]: value });
-    } catch (e) {
-      // no-op
-    }
-  }
-  
-  async function getSession(key) {
-    const api = chrome.storage?.session ?? chrome.storage.local;
-    try {
-      const obj = await api.get(key);
-      return obj?.[key] ?? null;
-    } catch {
-      return null;
-    }
-  }
-  
-  function broadcastHandle(tabId, handle) {
-    chrome.runtime.sendMessage({ type: "X_HANDLE", tabId, handle });
-  }
-  
-  // On navigation completion → detect handle, cache, broadcast
-  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    if (changeInfo.status !== "complete" || !tab?.url) return;
-    const handle = extractXHandle(tab.url);
-    await setSession(`handle:${tabId}`, handle);
-    if (handle) broadcastHandle(tabId, handle);
-  
-    // Ensure side panel is enabled for this tab
-    if (chrome.sidePanel?.setOptions) {
-      chrome.sidePanel.setOptions({ tabId, path: "index.html", enabled: true });
-    }
-  });
-  
-  // On tab activation → refresh handle, cache, broadcast
-  chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab?.url) return;
-    const handle = extractXHandle(tab.url);
-    await setSession(`handle:${tabId}`, handle);
-    if (handle) broadcastHandle(tabId, handle);
-  });
-  
-  // On install → open panel on action click
-  chrome.runtime.onInstalled.addListener(() => {
-    if (chrome.sidePanel?.setPanelBehavior) {
-      chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    }
-  });
-  
-  // Message endpoints for sidepanel
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    (async () => {
-      switch (request?.type || request?.action) {
-        case "GET_ACTIVE_TAB": {
-          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-          const tabId = active?.id ?? null;
-          const url = active?.url ?? null;
-          const handle = url ? extractXHandle(url) : null;
-          sendResponse({ tabId, url, handle });
-          return;
-        }
-  
-        case "GET_STORED_HANDLE": {
-          const tabId = request?.tabId;
-          if (!tabId) return sendResponse({ handle: null });
-          const handle = await getSession(`handle:${tabId}`);
-          sendResponse({ handle });
-          return;
-        }
-  
-        case "openSidePanel":
-        case "OPEN_SIDEPANEL": {
-          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (active?.id && chrome.sidePanel?.open) {
-            await chrome.sidePanel.open({ tabId: active.id });
-            sendResponse({ success: true });
-          } else {
-            sendResponse({ success: false });
-          }
-          return;
-        }
-  
-        case "getTabInfo": {
-          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-          sendResponse({ success: true, tab: active });
-          return;
-        }
-  
-        case "storage": {
-          if (request.operation === "get") {
-            const res = await getSession(request.key);
-            sendResponse({ success: true, data: res });
-            return;
-          } else if (request.operation === "set") {
-            await setSession(request.key, request.value);
-            sendResponse({ success: true });
-            return;
-          }
-          sendResponse({ success: false, error: "Unknown storage op" });
-          return;
-        }
-  
-        default:
-          sendResponse({ success: false, error: "Unknown message" });
-          return;
+      if (isTwitter) {
+        // Enable side panel for Twitter/X tabs
+        await chrome.sidePanel.setOptions({
+          tabId,
+          path: 'index.html',
+          enabled: true
+        });
+        
+        // Update action icon to indicate it's available
+        await chrome.action.setTitle({
+          tabId,
+          title: 'Open Karma Tracker (Twitter/X detected)'
+        });
+        
+        console.log('Side panel enabled for Twitter tab:', tabId);
+      } else {
+        // Keep side panel available but update title
+        await chrome.action.setTitle({
+          tabId,
+          title: 'Open Karma Tracker'
+        });
       }
-    })();
+    } catch (error) {
+      console.error('Error updating side panel options:', error);
+    }
+  }
+});
+
+// Handle messages from content script and side panel
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('Background received message:', message, 'from:', sender);
   
-    return true; // keep channel open for async
-  });
+  if (message.action === 'getTabInfo') {
+    // Get current tab information
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        sendResponse({
+          url: tabs[0].url,
+          title: tabs[0].title,
+          tabId: tabs[0].id
+        });
+      } else {
+        sendResponse({ error: 'No active tab found' });
+      }
+    });
+    return true; // Keep message channel open for async response
+  }
   
+  if (message.action === 'openSidePanel') {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (tabs[0]) {
+        try {
+          await chrome.sidePanel.open({ windowId: tabs[0].windowId });
+          sendResponse({ success: true });
+        } catch (error) {
+          sendResponse({ error: error.message });
+        }
+      }
+    });
+    return true;
+  }
+});
+
+// Handle startup
+chrome.runtime.onStartup.addListener(() => {
+  console.log('Karma Tracker extension started');
+});
+
+// Log when side panel is opened
+chrome.sidePanel.onPanelOpenChanged?.addListener?.(() => {
+  console.log('Side panel state changed');
+});

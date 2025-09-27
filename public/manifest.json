@@ -1,32 +1,46 @@
 {
-    "manifest_version": 3,
-    "name": "Karam Side Panel",
-    "version": "1.0.0",
-    "description": "A karma tracking side panel extension",
-    "permissions": [
-        "sidePanel",
-        "activeTab",
-        "storage",
-        "tabs"
-    ],
-    "host_permissions": [
-        "<all_urls>"
-    ],
-    "background": {
-        "service_worker": "background.js"
-    },
-    "side_panel": {
-        "default_path": "index.html"
-    },
-    "action": {
-        "default_title": "Open Karam Side Panel"
-    },
-    "content_security_policy": {
-        "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self'"
-    },
-    "icons": {
-        "16": "favicon.ico",
-        "48": "favicon.ico",
-        "128": "favicon.ico"
+  "manifest_version": 3,
+  "name": "Karma Tracker",
+  "version": "1.0.0",
+  "description": "Track blockchain karma system data while browsing Twitter/X",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://twitter.com/*",
+    "https://x.com/*",
+    "https://worldchain-sepolia.g.alchemy.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "action": {
+    "default_title": "Open Karma Tracker",
+    "default_popup": ""
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*", "*.js", "*.css"],
+      "matches": ["https://twitter.com/*", "https://x.com/*"]
+    }
+  ],
+  "icons": {
+    "16": "favicon.ico",
+    "48": "favicon.ico",
+    "128": "favicon.ico"
+  }
 }

@@ -16,11 +16,20 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
-    outDir: "dist",
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, "index.html"),
+        main: path.resolve(__dirname, 'index.html'),
       },
+      output: {
+        // Ensure consistent file names for extension
+        entryFileNames: 'assets/[name].js',
+        chunkFileNames: 'assets/[name].js',
+        assetFileNames: 'assets/[name].[ext]'
+      }
     },
+    // Copy extension files to dist
+    copyPublicDir: true,
   },
+  publicDir: 'public',
+  base: '/'
 }));
