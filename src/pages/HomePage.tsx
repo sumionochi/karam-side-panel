@@ -4,8 +4,12 @@ import { TransactionItem } from '@/components/TransactionItem';
 import { Badge } from '@/components/ui/badge';
 import { mockCurrentUser, mockTransactions } from '@/lib/mockData';
 import { TrendingUp, Clock, Gift, Users } from 'lucide-react';
+import { useXHandle } from '@/hooks/use-xhandle';
 
 export const HomePage = () => {
+  // Detected Twitter/X handle from active tab (background → sidepanel)
+  const { handle } = useXHandle();
+
   // TODO: Replace with actual user state and recent transactions from smart contract
   const currentUser = mockCurrentUser;
   const recentTransactions = mockTransactions.slice(0, 5);
@@ -33,6 +37,15 @@ export const HomePage = () => {
 
   return (
     <div className="p-4 space-y-4">
+      {/* X Handle hint (for testing Step 1 wiring) */}
+      <div className="text-xs text-muted-foreground">
+        {handle ? (
+          <>Detected X handle: <span className="font-medium">@{handle}</span></>
+        ) : (
+          <>Open a Twitter/X profile tab to auto-detect a handle.</>
+        )}
+      </div>
+
       {/* Karma Overview */}
       <Card className="karma-gradient text-white">
         <CardContent className="p-6">
@@ -96,9 +109,9 @@ export const HomePage = () => {
         </CardHeader>
         <CardContent className="space-y-2">
           {recentTransactions.map((transaction) => (
-            <TransactionItem 
-              key={transaction.id} 
-              transaction={transaction} 
+            <TransactionItem
+              key={transaction.id}
+              transaction={transaction}
               currentUserId={currentUser.id}
             />
           ))}
