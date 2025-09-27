@@ -11,29 +11,25 @@ import {
   type Address,
   type Hash,
 } from "viem";
+import { worldchainSepolia } from "viem/chains";
 import type { DailyUsage, PerRecipientUsage } from "@/types/karma";
 
 /** ───────────────────────── ENV */
-const RPC_URL = import.meta.env.VITE_RPC_URL as string;
-const CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID || 0);
 const KARAM_ADDRESS = import.meta.env.VITE_KARAM_ADDRESS as `0x${string}`;
 
 /** ───────────────────────── Chain & Clients */
-const chain = defineChain({
-  id: CHAIN_ID,
-  name: "Worldchain",
-  nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: [RPC_URL] } },
-});
 
 export const publicClient = createPublicClient({
-  chain,
-  transport: http(RPC_URL),
+  chain: worldchainSepolia,
+  transport: http(),
 });
 
 const injected = typeof window !== "undefined" && (window as any).ethereum;
 export const walletClient = injected
-  ? createWalletClient({ chain, transport: custom((window as any).ethereum) })
+  ? createWalletClient({
+      chain: worldchainSepolia,
+      transport: custom((window as any).ethereum),
+    })
   : null;
 
 async function ensureAccount(): Promise<Address> {
@@ -69,12 +65,13 @@ const ABI = parseAbi([
 /** ───────────────────────── Contract Instance (reads via direct client calls) */
 
 /* ---------------------------- READ ACTIONS (direct client calls) ---------------------------- */
-/* export async function getKarma(addr: string): Promise<number> {
+export async function getKarma(addr: string): Promise<number> {
   const out = await publicClient.readContract({
     address: KARAM_ADDRESS,
     abi: ABI,
     functionName: "karma",
     args: [getAddress(addr)],
+    authorizationList: undefined,
   });
   return Number(out as bigint);
 }
@@ -85,6 +82,7 @@ export async function getDailyUsage(addr: string): Promise<DailyUsage> {
     abi: ABI,
     functionName: "getDailyUsage",
     args: [getAddress(addr)],
+    authorizationList: undefined,
   });
   const [dayIdx, given, slashed] = result as [bigint, bigint, bigint];
   return {
@@ -103,6 +101,7 @@ export async function getPerRecipientUsage(
     abi: ABI,
     functionName: "getPerRecipientUsage",
     args: [getAddress(user), getAddress(other)],
+    authorizationList: undefined,
   });
   const [givenTo, slashedTo] = result as [bigint, bigint];
   return {
@@ -121,10 +120,11 @@ export async function getSocialConnections(addr: string): Promise<{
     abi: ABI,
     functionName: "socialConnections",
     args: [getAddress(addr)],
+    authorizationList: undefined,
   });
   const [tw, gh, dc] = result as [string, string, string];
   return { twitterUsername: tw, githubUsername: gh, discordUsername: dc };
-} */
+}
 
 /* ---------------------------- WRITE ACTIONS (simulate → write) --------------------------- */
 export async function register(): Promise<Hash> {

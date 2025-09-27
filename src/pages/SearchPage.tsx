@@ -42,10 +42,10 @@ export const SearchPage = () => {
 
   const handleSearch = async () => {
     const q = searchQuery.trim();
-    /* if (!q) return;
+    if (!q) return;
 
     setIsSearching(true);
-    try {
+    /* try {
       // try dynamic imports so this compiles even before real libs exist
       const ens: any = await import('@/lib/ens').catch(() => null);
       const indexer: any = await import('@/lib/indexer').catch(() => null);
@@ -128,7 +128,7 @@ export const SearchPage = () => {
     }
 
     setIsSearching(true);
-   /*  try {
+    try {
       const indexer: any = await import('@/lib/indexer').catch(() => null);
 
       if (indexer?.fetchProfileByXHandle) {
@@ -167,21 +167,20 @@ export const SearchPage = () => {
       }
     } finally {
       setIsSearching(false);
-    } */
+    }
   };
 
   const handleKarmaTransaction = async (amount: number, reason: string) => {
     if (!selectedUser) return;
 
-    /* try {
+    try {
       const contracts: any = await import('@/lib/contracts').catch(() => null);
 
       if (modalType === 'give') {
         if (contracts?.giveKarma) {
-          await contracts.giveKarma(selectedUser.address, amount, reason);
+          await contracts.giveKarma(selectedUser.address, amount, reason || '');
         } else {
-          // mock
-          await mockSmartContractFunctions.giveKarma(selectedUser.address, amount, reason);
+          await contracts.slashKarma(selectedUser.address, amount, reason || '');
         }
         toast({
           title: 'Karma sent! ✨',
@@ -211,7 +210,7 @@ export const SearchPage = () => {
         description: error?.shortMessage || error?.message || 'Please try again later',
         variant: 'destructive',
       });
-    } */
+    }
   };
 
   return (
