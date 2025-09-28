@@ -104,12 +104,20 @@ sequenceDiagram
 
 ```mermaid
 graph TD
-  SP[Side Panel Page] --> P[KarmaDisplay (Profile)]
-  SP --> T[KarmaToday]
-  SP --> A[KarmaAllTime]
-  SP --> H[KarmaHistory]
-  SP --> M[KarmaAdmin]
-  SP --> D[KarmaDirectory]
+  SP["Side Panel Page"]
+  P["KarmaDisplay (Profile)"]
+  T["KarmaToday"]
+  A["KarmaAllTime"]
+  H["KarmaHistory"]
+  M["KarmaAdmin"]
+  D["KarmaDirectory"]
+
+  SP --> P
+  SP --> T
+  SP --> A
+  SP --> H
+  SP --> M
+  SP --> D
 ```
 
 All views are stacked with separators in a **single scroll**.
