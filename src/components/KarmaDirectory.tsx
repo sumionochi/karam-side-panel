@@ -54,28 +54,37 @@ export default function KarmaDirectory({ pageSize = 20, maxScan = 400 }: Props) 
 
       const svc: any = new KarmaService();
 
-      // 1) Build candidate address set
+      // 1) Build candidate address set (prefer direct on-chain list)
       const addrs = new Set<string>();
-
-      // Try direct allUsers first
       let usedDirect = false;
+
+      // Preferred: getAllUsers() (fast path on mainnet)
       try {
         if (typeof svc.getAllUsers === "function") {
           const arr: string[] = await svc.getAllUsers();
           if (Array.isArray(arr) && arr.length) {
             arr.forEach((a) => a && addrs.add(a.toLowerCase()));
-            usedDirect = true;
+            usedDirect = addrs.size > 0;
           }
-        } else if (typeof svc.getAllUsersLength === "function" && typeof svc.getAllUsersAt === "function") {
-          const len = await svc.getAllUsersLength();
-          for (let i = 0; i < Math.min(2000, Number(len)); i++) {
-            const a = await svc.getAllUsersAt(i);
-            if (a) addrs.add(a.toLowerCase());
-          }
-          usedDirect = addrs.size > 0;
         }
       } catch {
-        // fall through to events
+        // ignore; we'll try other options
+      }
+
+      // Secondary: public array fallback (allUsers(i)) if available in service
+      if (!usedDirect) {
+        try {
+          if (typeof svc.getAllUsersLength === "function" && typeof svc.getAllUsersAt === "function") {
+            const len = await svc.getAllUsersLength();
+            for (let i = 0; i < Math.min(2000, Number(len)); i++) {
+              const a = await svc.getAllUsersAt(i);
+              if (a) addrs.add(a.toLowerCase());
+            }
+            usedDirect = addrs.size > 0;
+          }
+        } catch {
+          // ignore; next fallback is events
+        }
       }
 
       // Fallback: derive from events (givers/recipients/slashers/victims)
@@ -89,6 +98,7 @@ export default function KarmaDirectory({ pageSize = 20, maxScan = 400 }: Props) 
           } catch {}
           return null;
         };
+
         const events =
           (await tryLoad("getAllKarmaEventsDetailed")) ||
           (await tryLoad("getAllKarmaEvents")) ||
@@ -97,12 +107,7 @@ export default function KarmaDirectory({ pageSize = 20, maxScan = 400 }: Props) 
           [];
 
         for (const e of events) {
-          const cand = [
-            (e as any).from,
-            (e as any).to,
-            (e as any).slasher,
-            (e as any).victim,
-          ];
+          const cand = [(e as any).from, (e as any).to, (e as any).slasher, (e as any).victim];
           for (const c of cand) {
             if (c && typeof c === "string") addrs.add(c.toLowerCase());
           }
@@ -153,11 +158,11 @@ export default function KarmaDirectory({ pageSize = 20, maxScan = 400 }: Props) 
                 }
               }
 
-              // totals (optional)
+              // totals (optional but preferred)
               if (typeof svc.getUserTotals === "function") {
                 const t = await svc.getUserTotals(a);
                 totalReceived = num(t?.totalReceived);
-                totalSlashed = num(t?.totalSlashed);
+                totalSlashed  = num(t?.totalSlashed);
               } else {
                 if (typeof svc.getTotalReceived === "function") {
                   totalReceived = num(await svc.getTotalReceived(a));

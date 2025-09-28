@@ -1,5 +1,5 @@
 export const WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS =
-  "0x1EfE1DBCab7a3ca5Daf1b8C2fd34d27B842DE6c3";
+  "0x0d1F32D0048DBeC6A3Ac3dA7dc84BE5cd47e5cE4";
 
 export const KARAM_CONTRACT_ABI = [
   {
@@ -50,6 +50,19 @@ export const KARAM_CONTRACT_ABI = [
     inputs: [],
     outputs: [],
     stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "getAllUsers",
+    inputs: [],
+    outputs: [
+      {
+        name: "",
+        type: "address[]",
+        internalType: "address[]",
+      },
+    ],
+    stateMutability: "view",
   },
   {
     type: "function",
@@ -399,4 +412,4 @@ export const KARAM_CONTRACT_ABI = [
 ];
 
 export const WORLD_SEPOLIA_RPC =
-  "https://worldchain-sepolia.g.alchemy.com/public";
+  "https://worldchain-mainnet.g.alchemy.com/public";
