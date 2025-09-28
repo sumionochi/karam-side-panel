@@ -154,7 +154,7 @@ const Index = () => {
       {/* Footer */}
       <div className="kp-section pt-4 border-t-2 border-border">
         <div className="text-xs text-muted-foreground text-center wrap-balance">
-          WORLD SEPOLIA • CONTRACT: <span className="mono-truncate">{shortContract}</span>
+          WORLD MAINNET • CONTRACT: <span className="mono-truncate">{shortContract}</span>
         </div>
       </div>
     </div>
