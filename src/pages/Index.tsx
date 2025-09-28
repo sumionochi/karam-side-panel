@@ -1,14 +1,14 @@
 // Index.tsx
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Card } from "@/components/ui/card";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { KarmaDisplay } from "@/components/KarmaDisplay";
 import KarmaToday from "@/components/KarmaToday";
-import { WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS } from "@/constants/contract";
-import { KarmaService } from "@/services/KarmaService";
 import KarmaAllTime from "@/components/KarmaAllTime";
 import KarmaHistory from "@/components/KarmaHistory";
 import KarmaAdmin from "@/components/KarmaAdmin";
+import KarmaDirectory from "@/components/KarmaDirectory";
+import { Separator } from "@/components/ui/separator";
+import { WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS } from "@/constants/contract";
+import { KarmaService } from "@/services/KarmaService";
 
 declare const chrome: any;
 
@@ -87,7 +87,9 @@ const Index = () => {
       }
     };
     run();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [normHandle]);
 
   const shortContract = WORLDSEPOLIA_KARAM_CONTRACT_ADDRESS
@@ -100,9 +102,7 @@ const Index = () => {
       <div className="kp-section py-4 border-b-2 border-border">
         <div className="text-center w-full">
           <h1 className="text-2xl font-black uppercase tracking-wider">KARMA TRACKER</h1>
-          <p className="text-xs text-muted-foreground font-bold mt-1">
-            BLOCKCHAIN KARMA SYSTEM
-          </p>
+          <p className="text-xs text-muted-foreground font-bold mt-1">BLOCKCHAIN KARMA SYSTEM</p>
           <div className="mt-2 text-[11px] text-muted-foreground wrap-balance">
             {detecting
               ? "Detecting Twitter handle…"
@@ -120,48 +120,36 @@ const Index = () => {
         </div>
       </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="profile" className="kp-section w-full">
-        <div className="tabs-scroll">
-          <TabsList className="grid w-full grid-cols-3 sm:grid-cols-6 min-w-[250px]">
-            <TabsTrigger value="profile">Profile</TabsTrigger>
-            <TabsTrigger value="today">Today</TabsTrigger>
-            <TabsTrigger value="alltime">All-time</TabsTrigger>
-            <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="admin">Admin</TabsTrigger>
-            <TabsTrigger value="directory">Directory</TabsTrigger>
-          </TabsList>
-        </div>
+      {/* Single-scroll layout with separators */}
+      <div className="kp-section space-y-4">
+        {/* 1) Profile */}
+        <KarmaDisplay twitterUsername={normHandle} />
 
-        {/* Profile */}
-        <TabsContent value="profile" className="space-y-4">
-          <KarmaDisplay twitterUsername={normHandle} />
-        </TabsContent>
+        <Separator className="my-2" />
 
-        {/* Today */}
-        <TabsContent value="today" className="space-y-4">
-          <KarmaToday twitterUsername={normHandle} addressOverride={address} />
-        </TabsContent>
+        {/* 2) Today */}
+        <KarmaToday twitterUsername={normHandle} addressOverride={address} />
 
-        {/* Placeholders (will be replaced as we build) */}
-        <TabsContent value="alltime">
-          <KarmaAllTime twitterUsername={normHandle} addressOverride={address} />
-        </TabsContent>
+        <Separator className="my-2" />
 
-        <TabsContent value="history" className="space-y-4">
-          <KarmaHistory twitterUsername={normHandle} addressOverride={address} />
-        </TabsContent>
+        {/* 3) All-time */}
+        <KarmaAllTime twitterUsername={normHandle} addressOverride={address} />
 
-        <TabsContent value="admin" className="space-y-4">
-          <KarmaAdmin />
-        </TabsContent>
+        <Separator className="my-2" />
 
-        <TabsContent value="directory">
-          <Card className="border-2 border-border bg-card card-rounded shadow-sharp card-pad text-center text-xs text-muted-foreground">
-            Directory/Leaderboard coming soon. (Top karma holders, search)
-          </Card>
-        </TabsContent>
-      </Tabs>
+        {/* 4) History */}
+        <KarmaHistory twitterUsername={normHandle} addressOverride={address} />
+
+        <Separator className="my-2" />
+
+        {/* 5) Admin / System */}
+        <KarmaAdmin />
+
+        <Separator className="my-2" />
+
+        {/* 6) Directory / Leaderboard */}
+        <KarmaDirectory pageSize={20} maxScan={400} />
+      </div>
 
       {/* Footer */}
       <div className="kp-section pt-4 border-t-2 border-border">
