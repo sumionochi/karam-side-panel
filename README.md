@@ -49,6 +49,12 @@ The UI is tuned for **side-panels**: compact typography, strong black-and-white 
 - The panel shows `@someuser` → resolves their address → fetches & displays all sections.
 - Works in **250px min width** (side-panel) and scales up gracefully.
 
+<img width="1440" height="900" alt="Screenshot 2025-09-28 at 6 31 48 AM" src="https://github.com/user-attachments/assets/79fafe8f-ae44-4a64-b803-30bed9e91059" />
+
+<img width="1440" height="880" alt="Screenshot 2025-09-28 at 6 30 07 AM" src="https://github.com/user-attachments/assets/a43791ba-a939-4ffb-9be6-ef5385139034" />
+
+<img width="1440" height="879" alt="Screenshot 2025-09-28 at 7 27 57 AM" src="https://github.com/user-attachments/assets/3685e3f2-fbe3-4530-b755-d4f83249de60" />
+
 ---
 
 ## Architecture
